@@ -47,7 +47,7 @@ const toast = (msg) => {
   if (!t) return alert(msg);
   t.textContent = msg;
   t.style.display = "block";
-  setTimeout(() => { t.style.display = "none"; }, 2200);
+  setTimeout(() => { t.style.display = "none"; }, 3200);
 };
 
 // PWA register SW
@@ -129,43 +129,6 @@ function ymd(d){
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 }
 
-// Auto bootstrap koleksi & dokumen penting tanpa setup manual
-async function bootstrapCollections(user) {
-  console.log("Bootstrapping collections for user:", user.uid);
-  
-  const up = db.collection("users").doc(user.uid);
-  
-  try {
-    const userDoc = await up.get();
-    
-    if (userDoc.exists) {
-      // Update last login
-      await up.set({
-        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      
-      return userDoc.data();
-    } else {
-      // Buat dokumen user baru
-      const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
-      
-      await up.set({
-        email: user.email || "",
-        role: userRole,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      
-      return { role: userRole };
-    }
-  } catch (error) {
-    console.error("Error bootstrapping collections:", error);
-    // Kembalikan data minimal berdasarkan UID
-    const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
-    return { role: userRole };
-  }
-}
-
 // Role guard - DIPERBAIKI: Sekarang menggunakan data dari Firestore, bukan hanya UID
 function redirectByRole(uid, userData, pathIfAdmin, pathIfKaryawan) {
   console.log("Redirect by role:", { uid, userData });
@@ -222,6 +185,43 @@ function guardPage(uid, userData, required) {
   console.log("Access denied: invalid required role");
   location.href = "index.html";
   return false;
+}
+
+// Auto bootstrap koleksi & dokumen penting tanpa setup manual
+async function bootstrapCollections(user) {
+  console.log("Bootstrapping collections for user:", user.uid);
+  
+  const up = db.collection("users").doc(user.uid);
+  
+  try {
+    const userDoc = await up.get();
+    
+    if (userDoc.exists) {
+      // Update last login
+      await up.set({
+        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      
+      return userDoc.data();
+    } else {
+      // Buat dokumen user baru
+      const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
+      
+      await up.set({
+        email: user.email || "",
+        role: userRole,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      
+      return { role: userRole };
+    }
+  } catch (error) {
+    console.error("Error bootstrapping collections:", error);
+    // Kembalikan data minimal berdasarkan UID
+    const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
+    return { role: userRole };
+  }
 }
 
 // Auth routing untuk semua halaman - DIPERBAIKI: Sekarang menggunakan data user dari Firestore
