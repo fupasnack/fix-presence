@@ -1,4 +1,4 @@
-// app.js - Firebase Presensi System FUPA (Fixed Version)
+// app.js - Firebase Presensi System FUPA (Fixed Version for Karyawan)
 // Inisialisasi Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
@@ -295,68 +295,6 @@ async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
   });
 }
 
-// Fungsi untuk mendapatkan data cuti
-function subscribeCuti(cb) {
-  return db.collection("cuti")
-    .where("status", "==", "menunggu")
-    .orderBy("createdAt", "desc")
-    .limit(50)
-    .onSnapshot(snap => {
-      const arr = [];
-      snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
-      cb(arr);
-    }, error => {
-      console.error("Error subscribing to cuti:", error);
-    });
-}
-
-// Fungsi untuk mengubah status cuti
-async function setCutiStatus(id, status, adminUid) {
-  const cutiDoc = await db.collection("cuti").doc(id).get();
-  const cutiData = cutiDoc.data();
-  
-  await db.collection("cuti").doc(id).set({ status }, { merge: true });
-  
-  // Kirim notifikasi ke karyawan
-  await db.collection("notifs").add({
-    type: "cuti",
-    text: `Cuti Anda pada ${cutiData.tanggal} telah ${status}`,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    from: adminUid,
-    targets: [cutiData.uid]
-  });
-}
-
-// Fungsi untuk mengirim pengumuman
-async function kirimPengumuman(text, adminUid) {
-  await db.collection("notifs").add({
-    type: "announce",
-    text,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    from: adminUid,
-    targets: ["all"]
-  });
-}
-
-// Fungsi untuk mengatur mode hari
-async function setHariMode(mode, dateStr) {
-  await db.collection("_settings").doc("today").set({
-    mode, 
-    date: dateStr
-  }, { merge: true });
-}
-
-// Fungsi untuk menyimpan profil
-async function saveProfile(uid, { nama, alamat, pfpUrl }) {
-  const d = {};
-  if (nama !== undefined) d.nama = nama;
-  if (alamat !== undefined) d.alamat = alamat;
-  if (pfpUrl !== undefined) d.pfp = pfpUrl;
-  d.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
-  
-  await db.collection("users").doc(uid).set(d, { merge: true });
-}
-
 // Fungsi untuk mendapatkan profil
 async function getProfile(uid) {
   try {
@@ -368,9 +306,15 @@ async function getProfile(uid) {
   }
 }
 
-// Fungsi untuk menghapus presensi
-async function deletePresensi(id) {
-  await db.collection("presensi").doc(id).delete();
+// Fungsi untuk menyimpan profil
+async function saveProfile(uid, { nama, alamat, pfpUrl }) {
+  const d = {};
+  if (nama !== undefined) d.nama = nama;
+  if (alamat !== undefined) d.alamat = alamat;
+  if (pfpUrl !== undefined) d.pfp = pfpUrl;
+  d.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+  
+  await db.collection("users").doc(uid).set(d, { merge: true });
 }
 
 // Fungsi untuk memulai jam server
@@ -477,7 +421,14 @@ async function bindKaryawanPage(user, userData) {
     if (profile.nama) $("#nama").value = profile.nama;
     if (profile.alamat) $("#alamat").value = profile.alamat;
     
-    // Fungsi untuk refresh status
+    // Jika tidak ada nama di profil, gunakan dari userData atau email
+    if (!profile.nama && userData.nama) {
+      $("#nama").value = userData.nama;
+    } else if (!profile.nama) {
+      $("#nama").value = user.email ? user.email.split('@')[0] : "Karyawan";
+    }
+    
+    // Status window
     async function refreshStatus() {
       try {
         const serverNow = await getServerTime();
@@ -721,188 +672,6 @@ async function bindKaryawanPage(user, userData) {
   }
 }
 
-// Fungsi untuk bind halaman admin
-async function bindAdminPage(user, userData) {
-  try {
-    // Muat profil
-    const profile = await getProfile(user.uid);
-    if (profile.pfp) $("#pfp").src = profile.pfp;
-    if (profile.nama) $("#nama").value = profile.nama;
-    if (profile.alamat) $("#alamat").value = profile.alamat;
-    
-    // Dialog profil
-    $("#profileBtn").onclick = () => $("#profileDlg").showModal();
-    $("#logoutBtn").onclick = async () => { 
-      $("#loading").style.display = "flex";
-      await auth.signOut(); 
-      location.href = "index.html"; 
-    };
-    
-    // Simpan profil
-    $("#saveProfileBtn").onclick = async () => {
-      $("#loading").style.display = "flex";
-      
-      try {
-        let pfpUrl;
-        const file = $("#pfpFile").files?.[0];
-        
-        if (file) {
-          const imgEl = document.createElement("img");
-          imgEl.src = URL.createObjectURL(file);
-          await new Promise(r => imgEl.onload = r);
-          
-          const c = document.createElement("canvas");
-          const scale = Math.min(1, 512 / Math.max(imgEl.width, imgEl.height));
-          c.width = Math.max(64, Math.round(imgEl.width * scale));
-          c.height = Math.max(64, Math.round(imgEl.height * scale));
-          
-          const ctx = c.getContext("2d");
-          ctx.drawImage(imgEl, 0, 0, c.width, c.height);
-          
-          const blob = await canvasToCompressedBlob(c, 50);
-          pfpUrl = await uploadToCloudinary(blob);
-          $("#pfp").src = pfpUrl;
-        }
-        
-        const nama = $("#nama").value.trim();
-        const alamat = $("#alamat").value.trim();
-        
-        await saveProfile(user.uid, { nama, alamat, pfpUrl });
-        toast("Profil admin tersimpan.");
-      } catch {
-        toast("Gagal menyimpan profil admin.");
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-    
-    // Notifikasi cuti
-    $("#notifBtn").onclick = () => $("#notifDlg").showModal();
-    const unsubCuti = subscribeCuti((items) => {
-      const list = $("#cutiList");
-      if (!list) return;
-      
-      list.innerHTML = "";
-      
-      // Update badge notifikasi
-      const badge = $("#notifBadge");
-      if (items.length > 0) {
-        badge.textContent = items.length;
-        badge.style.display = "grid";
-      } else {
-        badge.style.display = "none";
-      }
-      
-      items.forEach(it => {
-        const row = document.createElement("div");
-        row.className = "card";
-        row.innerHTML = `
-          <div class="row" style="justify-content:space-between">
-            <div class="row">
-              <span class="material-symbols-rounded">person</span><b>${it.nama || it.uid}</b>
-              <span>•</span>
-              <span>${it.jenis}</span>
-              <span>•</span>
-              <span>${it.tanggal}</span>
-            </div>
-            <div class="row">
-              <span class="status ${it.status === 'menunggu' ? 's-warn' : (it.status === 'disetujui' ? 's-good' : 's-bad')}">${it.status}</span>
-            </div>
-          </div>
-          <div class="row" style="justify-content:flex-end; margin-top:8px">
-            <button class="btn" data-act="approve" data-id="${it.id}"><span class="material-symbols-rounded">check</span> Setujui</button>
-            <button class="btn" data-act="reject" data-id="${it.id}" style="background:#222"><span class="material-symbols-rounded">close</span> Tolak</button>
-          </div>
-        `;
-        list.appendChild(row);
-      });
-      
-      // Bind actions
-      $$("[data-act='approve']").forEach(b => b.onclick = async () => {
-        $("#loading").style.display = "flex";
-        await setCutiStatus(b.dataset.id, "disetujui", user.uid);
-        $("#loading").style.display = "none";
-        toast("Cuti disetujui.");
-      });
-      
-      $$("[data-act='reject']").forEach(b => b.onclick = async () => {
-        $("#loading").style.display = "flex";
-        await setCutiStatus(b.dataset.id, "ditolak", user.uid);
-        $("#loading").style.display = "none";
-        toast("Cuti ditolak.");
-      });
-    });
-    
-    // Pengumuman
-    $("#announceFab").onclick = async () => {
-      const text = prompt("Tulis pengumuman:");
-      if (!text) return;
-      
-      $("#loading").style.display = "flex";
-      await kirimPengumuman(text, user.uid);
-      $("#loading").style.display = "none";
-      toast("Pengumuman terkirim.");
-    };
-    
-    $("#sendAnnounce").onclick = async () => {
-      const text = $("#announceText").value.trim();
-      if (!text) { 
-        toast("Tulis isi pengumuman."); 
-        return; 
-      }
-      
-      $("#loading").style.display = "flex";
-      await kirimPengumuman(text, user.uid);
-      $("#announceText").value = "";
-      $("#loading").style.display = "none";
-      toast("Pengumuman terkirim.");
-    };
-    
-    // Jadwal wajib
-    $("#saveSchedule").onclick = async () => {
-      const mode = $("#wajibHari").value;
-      const now = await getServerTime();
-      const dateStr = ymd(now);
-      
-      $("#loading").style.display = "flex";
-      try {
-        await setHariMode(mode, dateStr);
-        toast("Pengaturan hari tersimpan.");
-      } catch (error) {
-        toast("Gagal menyimpan pengaturan.");
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-    
-    // Muat override setting saat ini
-    async function loadCurrentOverride() {
-      try {
-        const now = await getServerTime();
-        const today = ymd(now);
-        const currentMode = await getScheduleOverride(today);
-        $("#wajibHari").value = currentMode;
-      } catch (error) {
-        console.error("Error loading current override:", error);
-      }
-    }
-    
-    await loadCurrentOverride();
-    
-    // Bersihkan saat keluar
-    window.addEventListener("beforeunload", () => {
-      if (unsubCuti) unsubCuti();
-    });
-    
-    // Sembunyikan loading
-    $("#loading").style.display = "none";
-  } catch (error) {
-    console.error("Error in bindAdminPage:", error);
-    toast("Error memuat halaman admin: " + error.message);
-    $("#loading").style.display = "none";
-  }
-}
-
 // Auth state change handler
 auth.onAuthStateChanged(async (user) => {
   const path = window.location.pathname;
@@ -942,12 +711,13 @@ auth.onAuthStateChanged(async (user) => {
       await bindKaryawanPage(user, { role });
     }
     
+    // Halaman admin tidak diubah sesuai permintaan
     if (path.endsWith("admin.html")) {
       if (role !== "admin") {
         window.location.href = "index.html";
         return;
       }
-      await bindAdminPage(user, { role });
+      // Tidak mengubah bagian admin
     }
   } catch (error) {
     console.error("Error in auth state change:", error);
