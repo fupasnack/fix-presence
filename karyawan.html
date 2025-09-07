@@ -295,22 +295,26 @@
 
     // Dapatkan server time via Firestore serverTimestamp comparator
     async function getServerTime() {
-      const docRef = db.collection("_meta").doc("_srv");
-      await docRef.set({ t: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      const snap = await docRef.get();
-      const ts = snap.get("t");
-      return ts ? ts.toDate() : new Date(); // fallback
+      try {
+        const docRef = db.collection("_meta").doc("_srv");
+        await docRef.set({ t: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        const snap = await docRef.get();
+        const ts = snap.get("t");
+        return ts ? ts.toDate() : new Date(); // fallback
+      } catch (error) {
+        console.error("Error getting server time:", error);
+        return new Date();
+      }
     }
+    
     function fmtDateTime(d) {
       const pad = (n) => n.toString().padStart(2, "0");
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
-    function fmtHM(d) {
-      const pad = (n) => n.toString().padStart(2, "0");
-      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    }
-    function sameYMD(a,b){
-      return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+    
+    function ymd(d){
+      const pad = (n) => n.toString().padStart(2,"0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }
 
     // Aturan hari & jam
@@ -318,6 +322,7 @@
       berangkat: { start: {h:4,m:30}, end:{h:5,m:30} },
       pulang:    { start: {h:10,m:0}, end:{h:11,m:0} }
     };
+    
     function inWindow(d, jenis, extraLateMin=30) {
       const w = WINDOW[jenis];
       const start = new Date(d); start.setHours(w.start.h, w.start.m, 0, 0);
@@ -330,42 +335,42 @@
     }
 
     async function getScheduleOverride(dateYMD) {
-      const doc = await db.collection("_settings").doc("today").get();
-      if (doc.exists) {
-        const d = doc.data();
-        if (d.date === dateYMD) return d.mode;
+      try {
+        const doc = await db.collection("_settings").doc("today").get();
+        if (doc.exists) {
+          const d = doc.data();
+          if (d.date === dateYMD) return d.mode;
+        }
+        return "auto";
+      } catch (error) {
+        console.error("Error getting schedule override:", error);
+        return "auto";
       }
-      return "auto";
-    }
-
-    function ymd(d){
-      const pad = (n) => n.toString().padStart(2,"0");
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }
 
     // Perbaikan fungsi redirectByRole
-    function redirectByRole(uid, userData, pathIfAdmin, pathIfKaryawan) {
+    function redirectByRole(uid, userData) {
       console.log("Redirect by role:", { uid, userData });
       
       // Prioritaskan data dari Firestore
       if (userData && userData.role) {
-        if (userData.role === "admin" && !location.pathname.endsWith(pathIfAdmin)) {
+        if (userData.role === "admin" && !location.pathname.endsWith("admin.html")) {
           console.log("Redirecting to admin page (Firestore data)");
-          location.href = pathIfAdmin;
-        } else if (userData.role === "karyawan" && !location.pathname.endsWith(pathIfKaryawan)) {
+          location.href = "admin.html";
+        } else if (userData.role === "karyawan" && !location.pathname.endsWith("karyawan.html")) {
           console.log("Redirecting to karyawan page (Firestore data)");
-          location.href = pathIfKaryawan;
+          location.href = "karyawan.html";
         }
         return;
       }
       
       // Fallback ke UID check
-      if (ADMIN_UIDS.has(uid) && !location.pathname.endsWith(pathIfAdmin)) {
+      if (ADMIN_UIDS.has(uid) && !location.pathname.endsWith("admin.html")) {
         console.log("Redirecting to admin page (UID fallback)");
-        location.href = pathIfAdmin;
-      } else if (KARYAWAN_UIDS.has(uid) && !location.pathname.endsWith(pathIfKaryawan)) {
+        location.href = "admin.html";
+      } else if (KARYAWAN_UIDS.has(uid) && !location.pathname.endsWith("karyawan.html")) {
         console.log("Redirecting to karyawan page (UID fallback)");
-        location.href = pathIfKaryawan;
+        location.href = "karyawan.html";
       } else {
         console.log("Access denied: no valid role");
         auth.signOut();
@@ -445,59 +450,6 @@
       }
     }
 
-    // Perbaikan pada auth state changed handler
-    auth.onAuthStateChanged(async (user) => {
-      console.log("Auth state changed:", user);
-      const path = location.pathname.toLowerCase();
-      
-      if (!user) {
-        console.log("No user signed in");
-        // Cegah akses langsung
-        if (path.endsWith("karyawan.html") || path.endsWith("admin.html")) {
-          location.href = "index.html";
-        }
-        return;
-      }
-
-      try {
-        console.log("User signed in:", user.uid);
-        const userData = await bootstrapCollections(user);
-        
-        console.log("User data from Firestore:", userData);
-
-        // Update server time live
-        startServerClock("#serverTime");
-
-        // Routing per halaman
-        if (path.endsWith("index.html") || path.endsWith("/")) {
-          // Setelah login, arahkan sesuai role
-          console.log("Redirecting from login page");
-          redirectByRole(user.uid, userData, "admin.html", "karyawan.html");
-          return;
-        }
-
-        if (path.endsWith("karyawan.html")) {
-          console.log("Loading karyawan page");
-          if (!guardPage(user.uid, userData, "karyawan")) return;
-          await ensureNotificationPermission();
-          await bindKaryawanPage(user, userData);
-        }
-
-        if (path.endsWith("admin.html")) {
-          console.log("Loading admin page");
-          if (!guardPage(user.uid, userData, "admin")) return;
-          await ensureNotificationPermission();
-          // bindAdminPage(user, userData); // Tidak diimplementasikan di sini
-        }
-      } catch (error) {
-        console.error("Error in auth state change:", error);
-        toast("Error memuat data pengguna. Silakan coba lagi.");
-        // Jika terjadi error, signOut dan redirect ke login
-        await auth.signOut();
-        location.href = "index.html";
-      }
-    });
-
     // Notifikasi browser
     async function ensureNotificationPermission() {
       try {
@@ -510,6 +462,7 @@
         return false;
       } catch { return false; }
     }
+    
     function notify(msg) {
       if (!("Notification" in window)) return;
       if (Notification.permission === "granted") new Notification("Presensi FUPA", { body: msg });
@@ -555,6 +508,7 @@
         throw e;
       }
     }
+    
     function captureToCanvas(videoEl, canvasEl) {
       const w = videoEl.videoWidth;
       const h = videoEl.videoHeight;
@@ -629,6 +583,8 @@
           const arr = [];
           snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
           cb(arr);
+        }, error => {
+          console.error("Error in presensi subscription:", error);
         });
     }
 
@@ -642,6 +598,8 @@
           const arr = [];
           snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
           cb(arr);
+        }, error => {
+          console.error("Error in notification subscription:", error);
         });
     }
 
@@ -770,8 +728,11 @@
             return { allowed:true, status:win.status, serverNow };
           }
         }
+        
         let lastStatus = await refreshStatus();
-        setInterval(async () => { lastStatus = await refreshStatus(); }, 30_000);
+        setInterval(async () => { 
+          lastStatus = await refreshStatus(); 
+        }, 30_000);
 
         // Snap
         $("#snapBtn").onclick = () => {
@@ -823,6 +784,7 @@
             });
             toast("Presensi tersimpan.");
           } catch (e) {
+            console.error("Error saving presensi:", e);
             toast("Gagal menyimpan presensi.");
           } finally {
             if (loadingEl) loadingEl.style.display = "none";
@@ -897,6 +859,7 @@
             toast("Permintaan cuti dikirim.");
             $("#cutiDlg").close();
           } catch (e) {
+            console.error("Error submitting cuti:", e);
             toast("Gagal mengajukan cuti.");
           } finally {
             if (loadingEl) loadingEl.style.display = "none";
@@ -931,12 +894,14 @@
             const alamat = $("#alamat").value.trim();
             await saveProfile(user.uid, { nama, alamat, pfpUrl });
             toast("Profil tersimpan.");
-          } catch {
+          } catch (e) {
+            console.error("Error saving profile:", e);
             toast("Gagal menyimpan profil.");
           } finally {
             if (loadingEl) loadingEl.style.display = "none";
           }
         };
+        
         $("#logoutBtn").onclick = async () => { 
           // Tampilkan loading
           if (loadingEl) loadingEl.style.display = "flex";
@@ -949,9 +914,11 @@
 
         // Bersihkan stream saat keluar
         window.addEventListener("beforeunload", () => {
-          try { stream.getTracks().forEach(t => t.stop()); } catch {}
-          unsubLog && unsubLog();
-          unsubNotif && unsubNotif();
+          try { 
+            if (stream) stream.getTracks().forEach(t => t.stop()); 
+          } catch (e) {}
+          if (unsubLog) unsubLog();
+          if (unsubNotif) unsubNotif();
         });
       } catch (error) {
         console.error("Error in bindKaryawanPage:", error);
@@ -962,6 +929,59 @@
         if (loadingEl) loadingEl.style.display = "none";
       }
     }
+
+    // Perbaikan pada auth state changed handler
+    auth.onAuthStateChanged(async (user) => {
+      console.log("Auth state changed:", user);
+      const path = location.pathname.toLowerCase();
+      
+      if (!user) {
+        console.log("No user signed in");
+        // Cegah akses langsung
+        if (path.endsWith("karyawan.html") || path.endsWith("admin.html")) {
+          location.href = "index.html";
+        }
+        return;
+      }
+
+      try {
+        console.log("User signed in:", user.uid);
+        const userData = await bootstrapCollections(user);
+        
+        console.log("User data from Firestore:", userData);
+
+        // Update server time live
+        startServerClock("#serverTime");
+
+        // Routing per halaman
+        if (path.endsWith("index.html") || path.endsWith("/")) {
+          // Setelah login, arahkan sesuai role
+          console.log("Redirecting from login page");
+          redirectByRole(user.uid, userData);
+          return;
+        }
+
+        if (path.endsWith("karyawan.html")) {
+          console.log("Loading karyawan page");
+          if (!guardPage(user.uid, userData, "karyawan")) return;
+          await ensureNotificationPermission();
+          await bindKaryawanPage(user, userData);
+        }
+
+        if (path.endsWith("admin.html")) {
+          console.log("Loading admin page");
+          if (!guardPage(user.uid, userData, "admin")) return;
+          await ensureNotificationPermission();
+          // bindAdminPage(user, userData); // Tidak diimplementasikan di sini
+        }
+      } catch (error) {
+        console.error("Error in auth state change:", error);
+        toast("Error memuat data pengguna. Silakan coba lagi.");
+        // Jika terjadi error, signOut dan redirect ke login
+        await auth.signOut();
+        location.href = "index.html";
+      }
+    });
   </script>
 </body>
 </html>
