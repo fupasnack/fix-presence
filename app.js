@@ -902,17 +902,15 @@ async function bindAdminPage(user, userData) {
     });
     // Bind actions
     $$("[data-act='approve']").forEach(b => b.onclick = async () => {
-      const loadingEl = $("#loading");
-      if (loadingEl) loadingEl.style.display = "flex";
+      $("#loading").style.display = "flex";
       await setCutiStatus(b.dataset.id, "disetujui", user.uid);
-      if (loadingEl) loadingEl.style.display = "none";
+      $("#loading").style.display = "none";
       toast("Cuti disetujui.");
     });
     $$("[data-act='reject']").forEach(b => b.onclick = async () => {
-      const loadingEl = $("#loading");
-      if (loadingEl) loadingEl.style.display = "flex";
+      $("#loading").style.display = "flex";
       await setCutiStatus(b.dataset.id, "ditolak", user.uid);
-      if (loadingEl) loadingEl.style.display = "none";
+      $("#loading").style.display = "none";
       toast("Cuti ditolak.");
     });
   });
@@ -922,10 +920,9 @@ async function bindAdminPage(user, userData) {
     const text = prompt("Tulis pengumuman:");
     if (!text) return;
     
-    const loadingEl = $("#loading");
-    if (loadingEl) loadingEl.style.display = "flex";
+    $("#loading").style.display = "flex";
     await kirimPengumuman(text, user.uid);
-    if (loadingEl) loadingEl.style.display = "none";
+    $("#loading").style.display = "none";
     toast("Pengumuman terkirim.");
   };
   
@@ -933,11 +930,10 @@ async function bindAdminPage(user, userData) {
     const text = $("#announceText").value.trim();
     if (!text) { toast("Tulis isi pengumuman."); return; }
     
-    const loadingEl = $("#loading");
-    if (loadingEl) loadingEl.style.display = "flex";
+    $("#loading").style.display = "flex";
     await kirimPengumuman(text, user.uid);
     $("#announceText").value = "";
-    if (loadingEl) loadingEl.style.display = "none";
+    $("#loading").style.display = "none";
     toast("Pengumuman terkirim.");
   };
 
@@ -946,10 +942,9 @@ async function bindAdminPage(user, userData) {
     const mode = $("#wajibHari").value;
     const now = await getServerTime();
     
-    const loadingEl = $("#loading");
-    if (loadingEl) loadingEl.style.display = "flex";
+    $("#loading").style.display = "flex";
     await setHariMode(mode, ymd(now));
-    if (loadingEl) loadingEl.style.display = "none";
+    $("#loading").style.display = "none";
     toast("Pengaturan hari tersimpan.");
   };
 
@@ -959,8 +954,7 @@ async function bindAdminPage(user, userData) {
   const pageSize = 20;
   
   async function loadPresensi() {
-    const loadingEl = $("#loading");
-    if (loadingEl) loadingEl.style.display = "flex";
+    $("#loading").style.display = "flex";
     
     let q = db.collection("presensi").orderBy("createdAt", "desc");
     const nama = $("#fNama").value.trim().toLowerCase();
@@ -1002,7 +996,7 @@ async function bindAdminPage(user, userData) {
     renderPagination(filtered.length);
     renderTable(filtered, currentPage);
     
-    if (loadingEl) loadingEl.style.display = "none";
+    $("#loading").style.display = "none";
   }
   
   function renderPagination(totalItems) {
@@ -1050,10 +1044,9 @@ async function bindAdminPage(user, userData) {
   // Bind fungsi deletePresensi ke window agar bisa diakses dari onclick
   window.deletePresensi = async (id) => {
     if (confirm("Hapus data presensi ini?")) {
-      const loadingEl = $("#loading");
-      if (loadingEl) loadingEl.style.display = "flex";
+      $("#loading").style.display = "flex";
       await deletePresensi(id);
-      if (loadingEl) loadingEl.style.display = "none";
+      $("#loading").style.display = "none";
       toast("Presensi dihapus");
       loadPresensi(); // Reload data
     }
@@ -1071,63 +1064,20 @@ async function bindAdminPage(user, userData) {
     download(`presensi_${Date.now()}.csv`, csv);
   };
   
-  // Tambahkan select filter periode di HTML admin
-  const filterContainer = $(".row:has(#fNama)");
-  if (filterContainer && !$("#fPeriode")) {
-    const periodeSelect = document.createElement("select");
-    periodeSelect.id = "fPeriode";
-    periodeSelect.innerHTML = `
-      <option value="semua">Semua Periode</option>
-      <option value="hari">Hari Ini</option>
-      <option value="minggu">Minggu Ini</option>
-      <option value="bulan">Bulan Ini</option>
-      <option value="tahun">Tahun Ini</option>
-    `;
-    filterContainer.insertBefore(periodeSelect, $("#applyFilter"));
-  }
-  
-  // Muat awal + refresh periodik ringan
+  // Muat awal
   await loadPresensi();
-  setInterval(loadPresensi, 20_000);
 
   // Create akun karyawan (tanpa logout admin)
   // Trik: buat second app instance untuk createUser supaya sesi admin tetap
   const secondApp = firebase.apps.length > 1 ? firebase.apps[1] : firebase.initializeApp(firebaseConfig, "second");
   const secondAuth = secondApp.auth();
 
-  // Dialog konfirmasi UID
-  const confirmUidDlg = document.createElement("dialog");
-  confirmUidDlg.id = "confirmUidDlg";
-  confirmUidDlg.innerHTML = `
-    <div class="dlg-head">
-      <div class="row"><span class="material-symbols-rounded">person_add</span><b>Konfirmasi UID</b></div>
-      <button class="icon-btn" onclick="document.getElementById('confirmUidDlg').close()"><span class="material-symbols-rounded">close</span></button>
-    </div>
-    <div class="dlg-body">
-      <p>Akun berhasil dibuat! Salin UID berikut dan tambahkan ke constant KARYawan_UIDS di app.js:</p>
-      <div class="input" style="margin:10px 0">
-        <input id="newUid" type="text" readonly />
-        <button class="btn" onclick="copyUid()">Salin</button>
-      </div>
-      <button class="btn" onclick="document.getElementById('confirmUidDlg').close()">Selesai</button>
-    </div>
-  `;
-  document.body.appendChild(confirmUidDlg);
-  
-  function copyUid() {
-    const uidInput = $("#newUid");
-    uidInput.select();
-    document.execCommand("copy");
-    toast("UID disalin ke clipboard");
-  }
-
   $("#createUserBtn").onclick = async () => {
     const email = $("#newEmail").value.trim();
     const pass = $("#newPass").value.trim();
     if (!email || !pass) { toast("Isi email dan kata sandi."); return; }
     
-    const loadingEl = $("#loading");
-    if (loadingEl) loadingEl.style.display = "flex";
+    $("#loading").style.display = "flex";
     
     try {
       const cred = await secondAuth.createUserWithEmailAndPassword(email, pass);
@@ -1145,7 +1095,7 @@ async function bindAdminPage(user, userData) {
     } catch (e) {
       toast("Gagal membuat akun karyawan.");
     } finally {
-      if (loadingEl) loadingEl.style.display = "none";
+      $("#loading").style.display = "none";
     }
   };
 
@@ -1168,4 +1118,11 @@ function download(filename, text) {
   a.href = URL.createObjectURL(new Blob([text], {type:"text/csv"}));
   a.download = filename;
   a.click();
+}
+
+function copyUid() {
+  const uidInput = $("#newUid");
+  uidInput.select();
+  document.execCommand("copy");
+  toast("UID disalin ke clipboard");
 }
