@@ -40,7 +40,6 @@
     @media(min-width:900px){ .grid{grid-template-columns:1.1fr .9fr} }
     .card{
       background:var(--card); border-radius:16px; padding:16px; box-shadow:var(--soft-shadow);
-      backdrop-filter: blur(8px);
     }
     .btn{
       display:inline-flex; align-items:center; gap:8px; background:linear-gradient(135deg, #FFB300, #FF8F00);
@@ -219,12 +218,595 @@
 
   <div class="toast" id="toast"></div>
 
-  <!-- Hanya memuat Firebase SDK, semua logika ada di app.js -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  
-  <!-- Memuat app.js yang berisi semua logika aplikasi -->
-  <script src="app.js"></script>
+  <script>
+    // Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
+      authDomain: "presensi-byannisakaromi.firebaseapp.com",
+      projectId: "presensi-byannisakaromi",
+      storageBucket: "presensi-byannisakaromi.firebasestorage.app",
+      messagingSenderId: "291177514444",
+      appId: "1:291177514444:web:e312b378fa2c8f215ac969",
+      measurementId: "G-GXJC2K4ETP"
+    };
+
+    // Cloudinary
+    const CLOUD_NAME = "dn2o2vf04";
+    const UPLOAD_PRESET = "presensi_unsigned";
+
+    // UID roles
+    const ADMIN_UIDS = new Set([
+      "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
+      "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
+    ]);
+    const KARYAWAN_UIDS = new Set([
+      "JX6WFtYgrybnJevkoIBuWiLFqsK2", // cabangx@fupa.id
+      "UGhVLQv436NBv0Obu3qgYPQpYO33", // cabang1@fupa.id
+      "tuH94yTWqmg5hD6keVdK76NP7E53", // cabang2@fupa.id
+      "zytQWyHUBuVerfHnHCQWjrhnfIR2", // cabang3@fupa.id
+      "ZT7egJfRY5brcXQ7fn3Vx916mbB3", // cabang4@fupa.id
+      "45tDCgZJktdOiKJzZvkMMu1vBu72", // cabang5@fupa.id
+      "RQLs3tU9EfhRhBcJVz40s6PMMDn1", // cabang6@fupa.id
+      "ai8rMfEKknaCPcuf5D8l9bJFXS93", // cabang7@fupa.id
+      "4MTWbPMerdVLxnMCpnyChVcbgzX2", // cabang8@fupa.id
+      "8yPW5dTZ5JdCpAStrEJwogxdUJ63", // cabang9@fupa.id
+      "Z69r3d8OjTcf7NkbJsOyiAgH28P2"  // cabang10@fupa.id
+    ]);
+
+    // Inisialisasi Firebase
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // Util UI
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+    const toast = (msg) => {
+      const t = $("#toast");
+      if (!t) return alert(msg);
+      t.textContent = msg;
+      t.style.display = "block";
+      setTimeout(() => { t.style.display = "none"; }, 3200);
+    };
+
+    // Tampilkan info debug
+    function showDebugInfo(info) {
+      console.log(info);
+    }
+
+    // Dapatkan server time via Firestore serverTimestamp comparator
+    async function getServerTime() {
+      const docRef = db.collection("_meta").doc("_srv");
+      await docRef.set({ t: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      const snap = await docRef.get();
+      const ts = snap.get("t");
+      return ts ? ts.toDate() : new Date(); // fallback
+    }
+    function fmtDateTime(d) {
+      const pad = (n) => n.toString().padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    function fmtHM(d) {
+      const pad = (n) => n.toString().padStart(2, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    function sameYMD(a,b){
+      return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+    }
+
+    // Aturan hari & jam
+    const WINDOW = {
+      berangkat: { start: {h:4,m:30}, end:{h:5,m:30} },
+      pulang:    { start: {h:10,m:0}, end:{h:11,m:0} }
+    };
+    function inWindow(d, jenis, extraLateMin=30) {
+      const w = WINDOW[jenis];
+      const start = new Date(d); start.setHours(w.start.h, w.start.m, 0, 0);
+      const end = new Date(d);   end.setHours(w.end.h,   w.end.m,   0, 0);
+      const lateEnd = new Date(end.getTime() + extraLateMin*60000);
+      if (d < start) return {allowed:false, status:"dilarang"};
+      if (d >= start && d <= end) return {allowed:true, status:"tepat"};
+      if (d > end && d <= lateEnd) return {allowed:true, status:"terlambat"};
+      return {allowed:false, status:"dilarang"};
+    }
+
+    async function getScheduleOverride(dateYMD) {
+      const doc = await db.collection("_settings").doc("today").get();
+      if (doc.exists) {
+        const d = doc.data();
+        if (d.date === dateYMD) return d.mode;
+      }
+      return "auto";
+    }
+
+    function ymd(d){
+      const pad = (n) => n.toString().padStart(2,"0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    }
+
+    // Role guard
+    function redirectByRole(uid, userData, pathIfAdmin, pathIfKaryawan) {
+      if (userData && userData.role === "admin") {
+        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
+        return;
+      }
+      if (ADMIN_UIDS.has(uid)) {
+        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
+      } else if (KARYAWAN_UIDS.has(uid)) {
+        if (!location.pathname.endsWith(pathIfKaryawan)) location.href = pathIfKaryawan;
+      } else {
+        auth.signOut();
+        toast("Akses ditolak: akun belum diberi peran yang benar.");
+      }
+    }
+
+    function guardPage(uid, userData, required) {
+      if (userData) {
+        if (required === "admin" && userData.role === "admin") return true;
+        if (required === "karyawan" && userData.role === "karyawan") return true;
+      }
+      const isAdmin = ADMIN_UIDS.has(uid);
+      const isKaryawan = KARYAWAN_UIDS.has(uid);
+      if (required === "admin" && !isAdmin) { 
+        location.href = "index.html"; 
+        return false; 
+      }
+      if (required === "karyawan" && !isKaryawan) { 
+        location.href = "index.html"; 
+        return false; 
+      }
+      return true;
+    }
+
+    // Auto bootstrap koleksi & dokumen penting tanpa setup manual
+    async function bootstrapCollections(user) {
+      const up = db.collection("users").doc(user.uid);
+      try {
+        const userDoc = await up.get();
+        if (userDoc.exists) {
+          await up.set({
+            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          return userDoc.data();
+        } else {
+          const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
+          await up.set({
+            email: user.email || "",
+            role: userRole,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          return { role: userRole };
+        }
+      } catch (error) {
+        console.error("Error bootstrapping collections:", error);
+        const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
+        return { role: userRole };
+      }
+    }
+
+    // Jam server live
+    async function startServerClock(sel) {
+      const el = $(sel);
+      if (!el) return;
+      const tick = async () => {
+        try {
+          const t = await getServerTime();
+          el.textContent = `Waktu server: ${fmtDateTime(t)} WIB`;
+        } catch {
+          el.textContent = `Waktu server: tidak tersedia`;
+        }
+      };
+      await tick();
+      setInterval(tick, 10_000);
+    }
+
+    // Ambil lokasi
+    function getLocation(timeout=8000) {
+      return new Promise((res, rej) => {
+        if (!navigator.geolocation) return rej(new Error("Geolokasi tidak didukung."));
+        navigator.geolocation.getCurrentPosition(
+          (pos) => res({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          (err) => rej(err),
+          { enableHighAccuracy:true, timeout, maximumAge: 2_000 }
+        );
+      });
+    }
+
+    // Kamera
+    async function startCamera(videoEl) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        return stream;
+      } catch (e) {
+        toast("Tidak bisa mengakses kamera.");
+        throw e;
+      }
+    }
+    function captureToCanvas(videoEl, canvasEl) {
+      const w = videoEl.videoWidth;
+      const h = videoEl.videoHeight;
+      const MAXW = 720;
+      const scale = Math.min(1, MAXW / w);
+      canvasEl.width = Math.round(w * scale);
+      canvasEl.height = Math.round(h * scale);
+      const ctx = canvasEl.getContext("2d");
+      ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+    }
+
+    // Kompres gambar ke kualitas kecil (target ≤50 KB)
+    async function canvasToCompressedBlob(canvas, targetKB=50) {
+      let quality = 0.6;
+      let blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
+      for (let i = 0; i < 5 && blob.size / 1024 > targetKB; i++) {
+        quality = Math.max(0.3, quality - 0.1);
+        blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
+      }
+      if (blob.size / 1024 > targetKB) {
+        const scale = Math.sqrt(targetKB * 1024 / blob.size);
+        const newWidth = Math.max(320, Math.round(canvas.width * scale));
+        const newHeight = Math.max(240, Math.round(canvas.height * scale));
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = newWidth;
+        tempCanvas.height = newHeight;
+        const ctx = tempCanvas.getContext("2d");
+        ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+        blob = await new Promise(r => tempCanvas.toBlob(r, "image/jpeg", 0.7));
+      }
+      return blob;
+    }
+
+    // Upload ke Cloudinary unsigned
+    async function uploadToCloudinary(file) {
+      const url = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`;
+      const form = new FormData();
+      form.append("file", file);
+      form.append("upload_preset", UPLOAD_PRESET);
+      const r = await fetch(url, { method:"POST", body: form });
+      if (!r.ok) throw new Error("Upload Cloudinary gagal");
+      const data = await r.json();
+      return data.secure_url;
+    }
+
+    // Simpan presensi
+    async function savePresensi({ uid, nama, jenis, status, lat, lng, selfieUrl, serverDate }) {
+      const ts = serverDate || new Date();
+      const doc = {
+        uid, nama: nama || "", jenis, status,
+        lat, lng,
+        selfieUrl: selfieUrl || "",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        localTime: fmtDateTime(ts),
+        ymd: ymd(ts)
+      };
+      await db.collection("presensi").add(doc);
+    }
+
+    // Ambil riwayat singkat karyawan
+    function subscribeRiwayat(uid, cb) {
+      return db.collection("presensi")
+        .where("uid", "==", uid)
+        .orderBy("createdAt", "desc")
+        .limit(10)
+        .onSnapshot(snap => {
+          const arr = [];
+          snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
+          cb(arr);
+        });
+    }
+
+    // Notifikasi list untuk karyawan (pengumuman + progres cuti)
+    function subscribeNotifForKaryawan(uid, cb) {
+      return db.collection("notifs")
+        .where("targets", "array-contains-any", ["all", uid])
+        .orderBy("createdAt", "desc")
+        .limit(20)
+        .onSnapshot(snap => {
+          const arr = [];
+          snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
+          cb(arr);
+        });
+    }
+
+    // Cuti collection
+    async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
+      await db.collection("cuti").add({
+        uid, nama, jenis, tanggal, catatan: catatan || "",
+        status: "menunggu",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    // Profil simpan (nama, alamat, foto profil -> Cloudinary)
+    async function saveProfile(uid, { nama, alamat, pfpUrl }) {
+      const d = {};
+      if (nama !== undefined) d.nama = nama;
+      if (alamat !== undefined) d.alamat = alamat;
+      if (pfpUrl !== undefined) d.pfp = pfpUrl;
+      d.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection("users").doc(uid).set(d, { merge: true });
+    }
+
+    // Ambil profil
+    async function getProfile(uid) {
+      const snap = await db.collection("users").doc(uid).get();
+      return snap.exists ? snap.data() : {};
+    }
+
+    // Auth state change handler
+    auth.onAuthStateChanged(async (user) => {
+      $("#loading").style.display = "none";
+      const path = location.pathname.toLowerCase();
+      if (!user) {
+        if (path.endsWith("karyawan.html") || path.endsWith("admin.html")) {
+          location.href = "index.html";
+        }
+        return;
+      }
+
+      try {
+        const userData = await bootstrapCollections(user);
+        startServerClock("#serverTime");
+
+        if (path.endsWith("karyawan.html")) {
+          if (!guardPage(user.uid, userData, "karyawan")) return;
+          bindKaryawanPage(user, userData);
+        }
+      } catch (error) {
+        console.error("Error in auth state change:", error);
+        toast("Error memuat data pengguna. Silakan coba lagi.");
+        await auth.signOut();
+        location.href = "index.html";
+      }
+    });
+
+    // Halaman Karyawan bindings
+    async function bindKaryawanPage(user, userData) {
+      const video = $("#cam");
+      const canvas = $("#canvas");
+      const preview = $("#preview");
+      const jenisSel = $("#jenis");
+      const statusText = $("#statusText");
+      const statusChip = $("#statusChip");
+      const locText = $("#locText");
+
+      // Tampilkan loading
+      $("#loading").style.display = "flex";
+
+      // Guard kamera
+      let stream;
+      try {
+        stream = await startCamera(video);
+      } catch (e) {
+        $("#loading").style.display = "none";
+        return;
+      }
+
+      // Lokasi
+      let coords = null;
+      try {
+        coords = await getLocation();
+        locText.textContent = `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
+      } catch {
+        locText.textContent = "Lokasi tidak aktif";
+      }
+
+      // Profil muat
+      const profile = await getProfile(user.uid);
+      if (profile.pfp) $("#pfp").src = profile.pfp;
+      if (profile.nama) $("#nama").value = profile.nama;
+      if (profile.alamat) $("#alamat").value = profile.alamat;
+
+      // Status window
+      async function refreshStatus() {
+        const serverNow = await getServerTime();
+        const today = ymd(serverNow);
+        const override = await getScheduleOverride(today);
+        const isSunday = serverNow.getDay() === 0;
+        const jenis = jenisSel.value;
+
+        let wajib = true;
+        if (override === "forceOn") wajib = true;
+        else if (override === "forceOff") wajib = false;
+        else wajib = !isSunday;
+
+        if (!wajib) {
+          statusText.textContent = "Hari ini tidak wajib presensi";
+          statusChip.className = "status s-warn";
+          return { allowed: false, reason:"not-required" };
+        }
+
+        const win = inWindow(serverNow, jenis, 30);
+        if (!win.allowed) {
+          statusText.textContent = "Di luar jam presensi";
+          statusChip.className = "status s-bad";
+          return { allowed:false, reason:"out-of-window" };
+        } else {
+          statusText.textContent = win.status === "tepat" ? "Tepat waktu" : "Terlambat";
+          statusChip.className = "status " + (win.status === "tepat" ? "s-good" : "s-warn");
+          return { allowed:true, status:win.status, serverNow };
+        }
+      }
+      let lastStatus = await refreshStatus();
+      setInterval(async () => { lastStatus = await refreshStatus(); }, 30_000);
+
+      // Snap
+      $("#snapBtn").onclick = () => {
+        captureToCanvas(video, canvas);
+        canvas.style.display = "block";
+        preview.style.display = "none";
+        toast("Foto diambil. Anda bisa langsung upload.");
+      };
+
+      // Upload
+      $("#uploadBtn").onclick = async () => {
+        lastStatus = await refreshStatus();
+        if (!lastStatus.allowed) {
+          toast("Presensi ditolak: di luar jadwal atau tidak wajib.");
+          return;
+        }
+        if (!coords) {
+          toast("Lokasi belum aktif.");
+          return;
+        }
+        if (canvas.width === 0 || canvas.height === 0) {
+          toast("Ambil selfie dulu.");
+          return;
+        }
+        
+        $("#loading").style.display = "flex";
+        
+        try {
+          const blob = await canvasToCompressedBlob(can canvas, 50);
+          const url = await uploadToCloudinary(blob);
+          preview.src = url;
+          preview.style.display = "block";
+          const nama = ($("#nama")?.value || profile.nama || user.email.split("@")[0]).trim();
+          const jenis = jenisSel.value;
+          const status = lastStatus.status === "tepat" ? "tepat" : "terlambat";
+          await savePresensi({
+            uid: user.uid,
+            nama,
+            jenis,
+            status,
+            lat: coords.lat,
+            lng: coords.lng,
+            selfieUrl: url,
+            serverDate: lastStatus.serverNow
+          });
+          toast("Presensi tersimpan.");
+        } catch (e) {
+          toast("Gagal menyimpan presensi.");
+        } finally {
+          $("#loading").style.display = "none";
+        }
+      };
+
+      // Riwayat singkat
+      const unsubLog = subscribeRiwayat(user.uid, (items) => {
+        const list = $("#logList");
+        list.innerHTML = "";
+        items.forEach(it => {
+          const badge = it.status === "tepat" ? "s-good" : (it.status==="terlambat"?"s-warn":"s-bad");
+          const el = document.createElement("div");
+          el.className = "row";
+          el.style.justifyContent = "space-between";
+          el.innerHTML = `
+            <div class="row" style="gap:8px">
+              <span class="material-symbols-rounded">schedule</span>
+              <b>${it.localTime || 'Waktu tidak tersedia'}</b>
+              <span>•</span>
+              <span>${it.jenis}</span>
+            </div>
+            <span class="status ${badge}">${it.status}</span>
+          `;
+          list.appendChild(el);
+        });
+      });
+
+      // Notifikasi dialog
+      $("#notifBtn").onclick = () => $("#notifDlg").showModal();
+      const unsubNotif = subscribeNotifForKaryawan(user.uid, (items) => {
+        const list = $("#notifList");
+        list.innerHTML = "";
+        
+        const unreadCount = items.filter(item => !item.read).length;
+        const badge = $("#notifBadge");
+        if (unreadCount > 0) {
+          badge.textContent = unreadCount;
+          badge.style.display = "grid";
+        } else {
+          badge.style.display = "none";
+        }
+        
+        items.forEach(it => {
+          const el = document.createElement("div");
+          el.className = "card";
+          const sub = it.type === "announce" ? "Pengumuman" : "Info";
+          el.innerHTML = `
+            <div style="font-weight:700">${sub}</div>
+            <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
+            <div style="font-size:12px; opacity:.6; margin-top:6px">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
+          `;
+          list.appendChild(el);
+        });
+      });
+
+      // Cuti FAB
+      $("#cutiFab").onclick = () => $("#cutiDlg").showModal();
+      $("#ajukanCutiBtn").onclick = async () => {
+        const jenis = $("#cutiJenis").value;
+        const tanggal = $("#cutiTanggal").value;
+        const catatan = $("#cutiCatatan").value.trim();
+        if (!tanggal) { toast("Pilih tanggal cuti."); return; }
+        
+        $("#loading").style.display = "flex";
+        
+        try {
+          const nama = ($("#nama")?.value || profile.nama || user.email.split("@")[0]).trim();
+          await ajukanCuti(user.uid, nama, jenis, tanggal, catatan);
+          toast("Permintaan cuti dikirim.");
+          $("#cutiDlg").close();
+        } catch (e) {
+          toast("Gagal mengajukan cuti.");
+        } finally {
+          $("#loading").style.display = "none";
+        }
+      };
+
+      // Profil dialog
+      $("#profileBtn").onclick = () => $("#profileDlg").showModal();
+      $("#saveProfileBtn").onclick = async () => {
+        $("#loading").style.display = "flex";
+        
+        try {
+          let pfpUrl;
+          const file = $("#pfpFile").files?.[0];
+          if (file) {
+            const imgEl = document.createElement("img");
+            imgEl.src = URL.createObjectURL(file);
+            await new Promise(r => imgEl.onload = r);
+            const c = document.createElement("canvas");
+            const scale = Math.min(1, 512 / Math.max(imgEl.width, imgEl.height));
+            c.width = Math.max(64, Math.round(imgEl.width * scale));
+            c.height = Math.max(64, Math.round(imgEl.height * scale));
+            const ctx = c.getContext("2d");
+            ctx.drawImage(imgEl, 0, 0, c.width, c.height);
+            const pfpBlob = await canvasToCompressedBlob(c, 50);
+            pfpUrl = await uploadToCloudinary(pfpBlob);
+            $("#pfp").src = pfpUrl;
+          }
+          const nama = $("#nama").value.trim();
+          const alamat = $("#alamat").value.trim();
+          await saveProfile(user.uid, { nama, alamat, pfpUrl });
+          toast("Profil tersimpan.");
+        } catch {
+          toast("Gagal menyimpan profil.");
+        } finally {
+          $("#loading").style.display = "none";
+        }
+      };
+      $("#logoutBtn").onclick = async () => { 
+        $("#loading").style.display = "flex";
+        await auth.signOut(); 
+        location.href = "index.html"; 
+      };
+
+      // Sembunyikan loading setelah semua selesai
+      $("#loading").style.display = "none";
+
+      // Bersihkan stream saat keluar
+      window.addEventListener("beforeunload", () => {
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        unsubLog && unsubLog();
+        unsubNotif && unsubNotif();
+      });
+    }
+  </script>
 </body>
 </html>
