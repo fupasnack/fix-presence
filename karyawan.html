@@ -109,6 +109,31 @@
       font-weight: 700;
       color: #FF8F00;
     }
+    .notification-item {
+      padding: 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .notification-content {
+      flex: 1;
+    }
+    .notification-time {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .notification-delete {
+      background: transparent;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      padding: 4px;
+    }
+    .notification-delete:hover {
+      color: var(--bad);
+    }
   </style>
 </head>
 <body>
@@ -210,7 +235,7 @@
       <div class="row"><span class="material-symbols-rounded">notifications</span><b>Notifikasi</b></div>
       <button class="icon-btn" onclick="document.getElementById('notifDlg').close()"><span class="material-symbols-rounded">close</span></button>
     </div>
-    <div class="dlg-body" id="notifList" style="display:grid; gap:10px"></div>
+    <div class="dlg-body" id="notifList" style="max-height: 60vh; overflow-y: auto;"></div>
   </dialog>
 
   <!-- Dialog cuti -->
@@ -588,7 +613,7 @@
         });
     }
 
-    // Notifikasi list untuk karyawan
+    // Notifikasi list untuk karyawan - DIPERBARUI
     function subscribeNotifForKaryawan(uid, cb) {
       return db.collection("notifs")
         .where("targets", "array-contains-any", ["all", uid])
@@ -603,12 +628,24 @@
         });
     }
 
-    // Cuti collection
+    // Cuti collection - DIPERBARUI
     async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
-      await db.collection("cuti").add({
+      // Simpan data cuti
+      const cutiRef = await db.collection("cuti").add({
         uid, nama, jenis, tanggal, catatan: catatan || "",
         status: "menunggu",
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      
+      // Buat notifikasi untuk admin
+      await db.collection("notifs").add({
+        type: "cuti_request",
+        cutiId: cutiRef.id,
+        text: `${nama} mengajukan ${jenis} pada ${tanggal}${catatan ? ': ' + catatan : ''}`,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        from: uid,
+        targets: Array.from(ADMIN_UIDS), // Hanya untuk admin
+        read: false
       });
     }
 
@@ -813,7 +850,7 @@
           });
         });
 
-        // Notifikasi dialog
+        // Notifikasi dialog - DIPERBARUI
         $("#notifBtn").onclick = () => $("#notifDlg").showModal();
         const unsubNotif = subscribeNotifForKaryawan(user.uid, (items) => {
           const list = $("#notifList");
@@ -831,13 +868,29 @@
           
           items.forEach(it => {
             const el = document.createElement("div");
-            el.className = "card";
-            const sub = it.type === "announce" ? "Pengumuman" : "Info";
+            el.className = "notification-item";
+            
+            const sub = it.type === "announce" ? "Pengumuman" : 
+                       it.type === "cuti_response" ? "Balasan Cuti" : 
+                       it.type === "override" ? "Pengumuman Jadwal" : "Info";
+            
             el.innerHTML = `
-              <div style="font-weight:700">${sub}</div>
-              <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
-              <div style="font-size:12px; opacity:.6; margin-top:6px">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
+              <div class="notification-content">
+                <div style="font-weight:700">${sub}</div>
+                <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
+                <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
+              </div>
+              <button class="notification-delete" data-id="${it.id}">
+                <span class="material-symbols-rounded">close</span>
+              </button>
             `;
+            
+            // Tambahkan event listener untuk hapus notifikasi
+            el.querySelector(".notification-delete").onclick = async () => {
+              await db.collection("notifs").doc(it.id).delete();
+              toast("Notifikasi dihapus.");
+            };
+            
             list.appendChild(el);
           });
         });
