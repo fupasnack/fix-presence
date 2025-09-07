@@ -98,6 +98,15 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    .debug-info {
+      display: none;
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 8px;
+      margin-top: 15px;
+      font-size: 12px;
+      color: #666;
+    }
   </style>
 </head>
 <body>
@@ -136,6 +145,11 @@
         <span class="hint">Jika lupa sandi, hubungi admin.</span>
         <button id="loginBtn" class="btn"><span class="material-symbols-rounded">login</span> Masuk</button>
       </div>
+      
+      <div class="debug-info" id="debugInfo">
+        <p><strong>Debug Info:</strong></p>
+        <p id="debugText"></p>
+      </div>
     </div>
   </div>
 
@@ -145,7 +159,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script>
-    // Firebase config (diperbarui)
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
       authDomain: "presensi-byannisakaromi.firebaseapp.com",
@@ -155,29 +169,6 @@
       appId: "1:291177514444:web:e312b378fa2c8f215ac969",
       measurementId: "G-GXJC2K4ETP"
     };
-
-    // Cloudinary (diperbarui)
-    const CLOUD_NAME = "dn2o2vf04";
-    const UPLOAD_PRESET = "presensi_unsigned";
-
-    // UID roles (diperbarui sesuai data baru)
-    const ADMIN_UIDS = new Set([
-      "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
-      "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
-    ]);
-    const KARYAWAN_UIDS = new Set([
-      "JX6WFtYgrybnJevkoIBuWiLFqsK2", // cabangx@fupa.id
-      "UGhVLQv436NBv0Obu3qgYPQpYO33", // cabang1@fupa.id
-      "tuH94yTWqmg5hD6keVdK76NP7E53", // cabang2@fupa.id
-      "zytQWyHUBuVerfHnHCQWjrhnfIR2", // cabang3@fupa.id
-      "ZT7egJfRY5brcXQ7fn3Vx916mbB3", // cabang4@fupa.id
-      "45tDCgZJktdOiKJzZvkMMu1vBu72", // cabang5@fupa.id
-      "RQLs3tU9EfhRhBcJVz40s6PMMDn1", // cabang6@fupa.id
-      "ai8rMfEKknaCPcuf5D8l9bJFXS93", // cabang7@fupa.id
-      "4MTWbPMerdVLxnMCpnyChVcbgzX2", // cabang8@fupa.id
-      "8yPW5dTZ5JdCpAStrEJwogxdUJ63", // cabang9@fupa.id
-      "Z69r3d8OjTcf7NkbJsOyiAgH28P2"  // cabang10@fupa.id
-    ]);
 
     // Inisialisasi Firebase
     firebase.initializeApp(firebaseConfig);
@@ -192,8 +183,18 @@
       if (!t) return alert(msg);
       t.textContent = msg;
       t.style.display = "block";
-      setTimeout(() => { t.style.display = "none"; }, 2200);
+      setTimeout(() => { t.style.display = "none"; }, 3200);
     };
+
+    // Tampilkan info debug
+    function showDebugInfo(info) {
+      const debugInfo = $("#debugInfo");
+      const debugText = $("#debugText");
+      if (debugInfo && debugText) {
+        debugText.textContent = info;
+        debugInfo.style.display = "block";
+      }
+    }
 
     // UI only: toggle password eye
     document.getElementById('togglePass').onclick = () => {
@@ -208,183 +209,138 @@
     function bindLoginPage() {
       const loginBtn = $("#loginBtn");
       if (!loginBtn) return;
+      
       loginBtn.onclick = async () => {
         const email = $("#email").value.trim();
         const pass = $("#password").value.trim();
-        if (!email || !pass) { toast("Isi email dan kata sandi."); return; }
+        
+        if (!email || !pass) { 
+          toast("Isi email dan kata sandi."); 
+          return; 
+        }
         
         // Tampilkan loading
         $("#loading").style.display = "flex";
         
         try {
-          await auth.signInWithEmailAndPassword(email, pass);
-          // onAuthStateChanged akan redirect by role
+          const userCredential = await auth.signInWithEmailAndPassword(email, pass);
+          const user = userCredential.user;
+          
+          // Debug info
+          showDebugInfo(`Login berhasil. UID: ${user.uid}. Memeriksa role...`);
+          
+          // Periksa role dan redirect
+          await checkUserRoleAndRedirect(user);
         } catch (e) {
           $("#loading").style.display = "none";
-          console.error("Login error:", e);
+          let errorMessage = "Gagal masuk. Periksa kembali kredensial.";
           
-          if (e.code === "auth/user-not-found") {
-            toast("Email tidak terdaftar.");
-          } else if (e.code === "auth/wrong-password") {
-            toast("Kata sandi salah.");
-          } else if (e.code === "auth/invalid-email") {
-            toast("Format email tidak valid.");
-          } else {
-            toast("Gagal masuk. Periksa kembali kredensial.");
+          if (e.code === 'auth/user-not-found') {
+            errorMessage = "Email tidak terdaftar.";
+          } else if (e.code === 'auth/wrong-password') {
+            errorMessage = "Kata sandi salah.";
+          } else if (e.code === 'auth/invalid-email') {
+            errorMessage = "Format email tidak valid.";
+          } else if (e.code === 'auth/network-request-failed') {
+            errorMessage = "Koneksi jaringan gagal. Periksa koneksi internet Anda.";
           }
+          
+          toast(errorMessage);
+          showDebugInfo(`Error: ${e.code} - ${e.message}`);
         }
       };
     }
 
-    // Auto bootstrap koleksi & dokumen penting tanpa setup manual
-    async function bootstrapCollections(user) {
-      console.log("Bootstrapping collections for user:", user.uid);
-      
-      const up = db.collection("users").doc(user.uid);
+    // Periksa role user dan redirect
+    async function checkUserRoleAndRedirect(user) {
+      const uid = user.uid;
       
       try {
-        const userDoc = await up.get();
+        // Cek dokumen user di Firestore untuk mendapatkan role
+        const userDoc = await db.collection("users").doc(uid).get();
         
         if (userDoc.exists) {
-          // Update last login
-          await up.set({
-            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
+          const userData = userDoc.data();
+          const role = userData.role;
           
-          return userDoc.data();
+          if (role === 'admin') {
+            showDebugInfo("Role terdeteksi: Admin. Mengarahkan ke halaman admin...");
+            setTimeout(() => {
+              window.location.href = 'admin.html';
+            }, 1500);
+          } else if (role === 'karyawan') {
+            showDebugInfo("Role terdeteksi: Karyawan. Mengarahkan ke halaman karyawan...");
+            setTimeout(() => {
+              window.location.href = 'karyawan.html';
+            }, 1500);
+          } else {
+            showDebugInfo("Role tidak valid. Silakan hubungi administrator.");
+            toast("Akses ditolak: role tidak valid.");
+            await auth.signOut();
+            $("#loading").style.display = "none";
+          }
         } else {
-          // Buat dokumen user baru
-          const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
-          
-          await up.set({
-            email: user.email || "",
-            role: userRole,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          
-          return { role: userRole };
+          // Jika dokumen user tidak ada, buat dokumen baru
+          showDebugInfo("Dokumen user tidak ditemukan. Membuat dokumen baru...");
+          await createUserDocument(user);
+          // Setelah membuat dokumen, coba lagi
+          await checkUserRoleAndRedirect(user);
         }
       } catch (error) {
-        console.error("Error bootstrapping collections:", error);
-        // Kembalikan data minimal berdasarkan UID
-        const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : (KARYAWAN_UIDS.has(user.uid) ? "karyawan" : "unknown");
-        return { role: userRole };
+        console.error("Error checking user role:", error);
+        toast("Error memeriksa role pengguna.");
+        showDebugInfo(`Error: ${error.message}`);
+        $("#loading").style.display = "none";
       }
     }
 
-    // Role guard - DIPERBAIKI: Sekarang menggunakan data dari Firestore, bukan hanya UID
-    function redirectByRole(uid, userData, pathIfAdmin, pathIfKaryawan) {
-      console.log("Redirect by role:", { uid, userData });
-      
-      // Cek dari Firestore data pertama
-      if (userData && userData.role === "admin") {
-        console.log("Redirecting to admin page");
-        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
-        return;
-      }
-      
-      // Cek dari UID sebagai fallback
-      if (ADMIN_UIDS.has(uid)) {
-        console.log("Redirecting to admin page (UID fallback)");
-        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
-      } else if (KARYAWAN_UIDS.has(uid)) {
-        console.log("Redirecting to karyawan page (UID fallback)");
-        if (!location.pathname.endsWith(pathIfKaryawan)) location.href = pathIfKaryawan;
-      } else {
-        console.log("Access denied: no valid role");
-        auth.signOut();
-        toast("Akses ditolak: akun belum diberi peran yang benar.");
+    // Buat dokumen user baru di Firestore
+    async function createUserDocument(user) {
+      try {
+        // Daftar UID admin (harus sesuai dengan aturan Firestore)
+        const ADMIN_UIDS = [
+          "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
+          "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
+        ];
+        
+        // Tentukan role berdasarkan UID
+        const role = ADMIN_UIDS.includes(user.uid) ? 'admin' : 'karyawan';
+        
+        // Buat dokumen user
+        await db.collection("users").doc(user.uid).set({
+          email: user.email,
+          role: role,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        showDebugInfo(`Dokumen user dibuat dengan role: ${role}`);
+      } catch (error) {
+        console.error("Error creating user document:", error);
+        throw new Error("Gagal membuat dokumen user");
       }
     }
 
-    function guardPage(uid, userData, required) {
-      console.log("Guard page check:", { uid, userData, required });
-      
-      // Cek dari Firestore data pertama
-      if (userData) {
-        if (required === "admin" && userData.role === "admin") return true;
-        if (required === "karyawan" && userData.role === "karyawan") return true;
-      }
-      
-      // Cek dari UID sebagai fallback
-      const isAdmin = ADMIN_UIDS.has(uid);
-      const isKaryawan = KARYAWAN_UIDS.has(uid);
-      
-      if (required === "admin") {
-        if (isAdmin) return true;
-        console.log("Access denied: not admin");
-        location.href = "index.html"; 
-        return false;
-      }
-      
-      if (required === "karyawan") {
-        if (isKaryawan) return true;
-        console.log("Access denied: not karyawan");
-        location.href = "index.html"; 
-        return false;
-      }
-      
-      // Jika required tidak sesuai, tolak akses
-      console.log("Access denied: invalid required role");
-      location.href = "index.html";
-      return false;
-    }
-
-    // Auth routing untuk semua halaman - DIPERBAIKI: Sekarang menggunakan data user dari Firestore
+    // Auth state change handler
     auth.onAuthStateChanged(async (user) => {
-      console.log("Auth state changed:", user);
-      const path = location.pathname.toLowerCase();
+      $("#loading").style.display = "none";
       
+      const path = location.pathname.toLowerCase();
       if (!user) {
-        console.log("No user signed in");
-        // Cegah akses langsung
+        // Cegah akses langsung ke halaman admin/karyawan
         if (path.endsWith("karyawan.html") || path.endsWith("admin.html")) {
           location.href = "index.html";
         }
-        // halaman login tidak butuh apa-apa
+        // Inisialisasi halaman login
         if (path.endsWith("index.html") || path.endsWith("/")) {
           bindLoginPage();
         }
         return;
       }
 
-      try {
-        console.log("User signed in:", user.uid);
-        const userData = await bootstrapCollections(user);
-        
-        console.log("User data from Firestore:", userData);
-
-        // Update server time live
-        startServerClock("#serverTime");
-
-        // Routing per halaman
-        if (path.endsWith("index.html") || path.endsWith("/")) {
-          // Setelah login, arahkan sesuai role
-          console.log("Redirecting from login page");
-          redirectByRole(user.uid, userData, "admin.html", "karyawan.html");
-          return;
-        }
-
-        if (path.endsWith("karyawan.html")) {
-          console.log("Loading karyawan page");
-          if (!guardPage(user.uid, userData, "karyawan")) return;
-          await ensureNotificationPermission();
-          bindKaryawanPage(user, userData);
-        }
-
-        if (path.endsWith("admin.html")) {
-          console.log("Loading admin page");
-          if (!guardPage(user.uid, userData, "admin")) return;
-          await ensureNotificationPermission();
-          bindAdminPage(user, userData);
-        }
-      } catch (error) {
-        console.error("Error in auth state change:", error);
-        toast("Error memuat data pengguna. Silakan coba lagi.");
-        // Jika terjadi error, signOut dan redirect ke login
-        await auth.signOut();
-        location.href = "index.html";
+      // Jika user sudah login, arahkan ke halaman yang sesuai
+      if (path.endsWith("index.html") || path.endsWith("/")) {
+        await checkUserRoleAndRedirect(user);
       }
     });
 
@@ -397,6 +353,13 @@
 
     // Inisialisasi halaman login
     bindLoginPage();
+
+    // Enter key untuk login
+    document.getElementById('password').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        document.getElementById('loginBtn').click();
+      }
+    });
   </script>
 </body>
 </html>
