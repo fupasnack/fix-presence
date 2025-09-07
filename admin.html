@@ -97,6 +97,42 @@
       background: #FFB300;
       color: white;
     }
+    .notification-item {
+      padding: 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .notification-content {
+      flex: 1;
+    }
+    .notification-time {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .notification-delete {
+      background: transparent;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      padding: 4px;
+    }
+    .notification-delete:hover {
+      color: var(--bad);
+    }
+    .cuti-request {
+      background: #f9f9f9;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .cuti-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -247,7 +283,7 @@
       <div class="row"><span class="material-symbols-rounded">approval</span><b>Permintaan cuti</b></div>
       <button class="icon-btn" onclick="document.getElementById('notifDlg').close()"><span class="material-symbols-rounded">close</span></button>
     </div>
-    <div class="dlg-body" id="cutiList" style="display:grid; gap:10px"></div>
+    <div class="dlg-body" id="cutiList" style="max-height: 60vh; overflow-y: auto;"></div>
   </dialog>
 
   <div class="toast" id="toast"></div>
@@ -420,51 +456,100 @@
       return data.secure_url;
     }
 
-    // Admin list cuti
-    function subscribeCuti(cb) {
-      return db.collection("cuti")
-        .where("status", "==", "menunggu") // Hanya tampilkan yang statusnya menunggu
+    // Admin list cuti - DIPERBARUI
+    function subscribeNotifCuti(cb) {
+      return db.collection("notifs")
+        .where("type", "==", "cuti_request")
+        .where("targets", "array-contains-any", Array.from(ADMIN_UIDS))
         .orderBy("createdAt", "desc")
         .limit(50)
         .onSnapshot(snap => {
           const arr = [];
-          snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
+          snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
           cb(arr);
         });
     }
 
-    async function setCutiStatus(id, status, adminUid) {
-      const cutiDoc = await db.collection("cuti").doc(id).get();
+    // Fungsi untuk memproses permintaan cuti - DIPERBARUI
+    async function processCutiRequest(notifId, cutiId, status, adminUid) {
+      // Update status cuti
+      await db.collection("cuti").doc(cutiId).update({ status });
+      
+      // Dapatkan data cuti
+      const cutiDoc = await db.collection("cuti").doc(cutiId).get();
       const cutiData = cutiDoc.data();
       
-      await db.collection("cuti").doc(id).set({ status }, { merge:true });
+      // Buat presensi otomatis jika cuti disetujui
+      if (status === "disetujui") {
+        const dateObj = new Date(cutiData.tanggal);
+        if (isNaN(dateObj.getTime())) {
+          dateObj = new Date(); // Fallback jika tanggal invalid
+        }
+        
+        await db.collection("presensi").add({
+          uid: cutiData.uid,
+          nama: cutiData.nama,
+          jenis: cutiData.jenis,
+          status: "cuti",
+          lat: null,
+          lng: null,
+          selfieUrl: "",
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          localTime: fmtDateTime(dateObj),
+          ymd: ymd(dateObj)
+        });
+      }
       
       // Kirim notifikasi ke karyawan
       await db.collection("notifs").add({
-        type: "cuti",
-        text: `Cuti Anda pada ${cutiData.tanggal} telah ${status}`,
+        type: "cuti_response",
+        text: `Permintaan ${cutiData.jenis} Anda pada ${cutiData.tanggal} telah ${status}`,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         from: adminUid,
-        targets: [cutiData.uid]
+        targets: [cutiData.uid],
+        read: false
       });
+      
+      // Hapus notifikasi permintaan cuti
+      await db.collection("notifs").doc(notifId).delete();
     }
 
-    // Pengumuman
+    // Pengumuman - DIPERBARUI
     async function kirimPengumuman(text, adminUid) {
       await db.collection("notifs").add({
         type: "announce",
         text,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         from: adminUid,
-        targets: ["all"]
+        targets: ["all"],
+        read: false
       });
     }
 
-    // Jadwal wajib
-    async function setHariMode(mode, dateStr) {
+    // Jadwal wajib - DIPERBARUI
+    async function setHariMode(mode, dateStr, adminUid) {
       await db.collection("_settings").doc("today").set({
         mode, date: dateStr
       }, { merge: true });
+      
+      // Kirim notifikasi override ke semua karyawan
+      let message = "";
+      if (mode === "forceOn") {
+        message = "Admin memaksa wajib presensi hari ini (" + dateStr + ").";
+      } else if (mode === "forceOff") {
+        message = "Admin memaksa tidak wajib presensi hari ini (" + dateStr + ").";
+      } else {
+        message = "Pengaturan presensi kembali ke mode otomatis (Minggu non-presensi) untuk hari ini (" + dateStr + ").";
+      }
+      
+      await db.collection("notifs").add({
+        type: "override",
+        text: message,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        from: adminUid,
+        targets: ["all"],
+        read: false
+      });
     }
 
     // Profil simpan (nama, alamat, foto profil -> Cloudinary)
@@ -580,10 +665,10 @@
         }
       };
 
-      // Notifikasi (cuti)
+      // Notifikasi (cuti) - DIPERBARUI
       $("#notifBtn").onclick = () => $("#notifDlg").showModal();
       const cutiList = $("#cutiList");
-      const unsubCuti = subscribeCuti((items) => {
+      const unsubNotifCuti = subscribeNotifCuti((items) => {
         cutiList.innerHTML = "";
         
         // Update badge notifikasi
@@ -597,43 +682,52 @@
         
         items.forEach(it => {
           const row = document.createElement("div");
-          row.className = "card";
+          row.className = "cuti-request";
           row.innerHTML = `
-            <div class="row" style="justify-content:space-between">
-              <div class="row">
-                <span class="material-symbols-rounded">person</span><b>${it.nama || it.uid}</b>
-                <span>•</span>
-                <span>${it.jenis}</span>
-                <span>•</span>
-                <span>${it.tanggal}</span>
-              </div>
-              <div class="row">
-                <span class="status ${it.status==='menunggu'?'s-warn':(it.status==='disetujui'?'s-good':'s-bad')}">${it.status}</span>
-              </div>
+            <div class="notification-content">
+              <div style="font-weight:700">${it.text || 'Permintaan cuti'}</div>
+              <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ''}</div>
             </div>
-            <div class="row" style="justify-content:flex-end; margin-top:8px">
-              <button class="btn" data-act="approve" data-id="${it.id}"><span class="material-symbols-rounded">check</span> Setujui</button>
-              <button class="btn" data-act="reject" data-id="${it.id}" style="background:#222"><span class="material-symbols-rounded">close</span> Tolak</button>
+            <div class="cuti-actions">
+              <button class="btn" data-act="approveCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}">
+                <span class="material-symbols-rounded">check</span> Setujui
+              </button>
+              <button class="btn" data-act="rejectCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}" style="background:#222">
+                <span class="material-symbols-rounded">close</span> Tolak
+              </button>
+              <button class="notification-delete" data-notifid="${it.id}">
+                <span class="material-symbols-rounded">close</span>
+              </button>
             </div>
           `;
+          
           cutiList.appendChild(row);
         });
+        
         // Bind actions
-        $$("[data-act='approve']").forEach(b => b.onclick = async () => {
+        $$("[data-act='approveCuti']").forEach(b => b.onclick = async () => {
           $("#loading").style.display = "flex";
-          await setCutiStatus(b.dataset.id, "disetujui", user.uid);
+          await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "disetujui", user.uid);
           $("#loading").style.display = "none";
           toast("Cuti disetujui.");
         });
-        $$("[data-act='reject']").forEach(b => b.onclick = async () => {
+        
+        $$("[data-act='rejectCuti']").forEach(b => b.onclick = async () => {
           $("#loading").style.display = "flex";
-          await setCutiStatus(b.dataset.id, "ditolak", user.uid);
+          await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "ditolak", user.uid);
           $("#loading").style.display = "none";
           toast("Cuti ditolak.");
         });
+        
+        $$(".notification-delete").forEach(b => b.onclick = async () => {
+          $("#loading").style.display = "flex";
+          await db.collection("notifs").doc(b.dataset.notifid).delete();
+          $("#loading").style.display = "none";
+          toast("Notifikasi dihapus.");
+        });
       });
 
-      // Pengumuman
+      // Pengumuman - DIPERBARUI
       $("#announceFab").onclick = async () => {
         const text = prompt("Tulis pengumuman:");
         if (!text) return;
@@ -655,13 +749,14 @@
         toast("Pengumuman terkirim.");
       };
 
-      // Jadwal wajib / tidak
+      // Jadwal wajib / tidak - DIPERBARUI
       $("#saveSchedule").onclick = async () => {
         const mode = $("#wajibHari").value;
         const now = await getServerTime();
+        const todayYMD = ymd(now);
         
         $("#loading").style.display = "flex";
-        await setHariMode(mode, ymd(now));
+        await setHariMode(mode, todayYMD, user.uid);
         $("#loading").style.display = "none";
         toast("Pengaturan hari tersimpan.");
       };
@@ -819,7 +914,7 @@
 
       // Bersih
       window.addEventListener("beforeunload", () => {
-        unsubCuti && unsubCuti();
+        unsubNotifCuti && unsubNotifCuti();
       });
     }
   </script>
