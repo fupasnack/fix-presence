@@ -93,6 +93,22 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    .user-info {
+      background: rgba(255, 255, 255, 0.9);
+      padding: 10px 15px;
+      border-radius: 12px;
+      margin-bottom: 15px;
+      border: 1px solid rgba(0,0,0,0.1);
+      box-shadow: var(--soft-shadow);
+    }
+    .user-info p {
+      margin: 5px 0;
+      font-size: 14px;
+    }
+    .user-name {
+      font-weight: 700;
+      color: #FF8F00;
+    }
   </style>
 </head>
 <body>
@@ -121,6 +137,11 @@
   </header>
 
   <div class="container">
+    <!-- Informasi Pengguna -->
+    <div class="user-info" id="userInfo">
+      <p>Memuat data pengguna...</p>
+    </div>
+    
     <div class="grid">
       <section class="card">
         <h3 style="margin:0 0 8px">Ambil presensi</h3>
@@ -222,7 +243,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script>
-    // Firebase config (diperbarui)
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
       authDomain: "presensi-byannisakaromi.firebaseapp.com",
@@ -233,11 +254,11 @@
       measurementId: "G-GXJC2K4ETP"
     };
 
-    // Cloudinary (diperbarui)
+    // Cloudinary
     const CLOUD_NAME = "dn2o2vf04";
     const UPLOAD_PRESET = "presensi_unsigned";
 
-    // UID roles (diperbarui sesuai data baru)
+    // UID roles
     const ADMIN_UIDS = new Set([
       "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
       "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
@@ -293,10 +314,6 @@
     }
 
     // Aturan hari & jam
-    // - Minggu default non-presensi kecuali dipaksa admin
-    // - Berangkat: 04:30–05:30
-    // - Pulang: 10:00–11:00
-    // - Toleransi terlambat: 30 menit setelah awal window -> status "terlambat" jika upload di <= akhir window + 30
     const WINDOW = {
       berangkat: { start: {h:4,m:30}, end:{h:5,m:30} },
       pulang:    { start: {h:10,m:0}, end:{h:11,m:0} }
@@ -313,11 +330,10 @@
     }
 
     async function getScheduleOverride(dateYMD) {
-      // admin menulis ke _settings/today: { mode: "auto"|"forceOn"|"forceOff", date: "YYYY-MM-DD" }
       const doc = await db.collection("_settings").doc("today").get();
       if (doc.exists) {
         const d = doc.data();
-        if (d.date === dateYMD) return d.mode; // mode khusus untuk hari ini
+        if (d.date === dateYMD) return d.mode;
       }
       return "auto";
     }
@@ -327,24 +343,29 @@
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }
 
-    // Role guard - DIPERBAIKI: Sekarang menggunakan data dari Firestore, bukan hanya UID
+    // Perbaikan fungsi redirectByRole
     function redirectByRole(uid, userData, pathIfAdmin, pathIfKaryawan) {
       console.log("Redirect by role:", { uid, userData });
       
-      // Cek dari Firestore data pertama
-      if (userData && userData.role === "admin") {
-        console.log("Redirecting to admin page");
-        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
+      // Prioritaskan data dari Firestore
+      if (userData && userData.role) {
+        if (userData.role === "admin" && !location.pathname.endsWith(pathIfAdmin)) {
+          console.log("Redirecting to admin page (Firestore data)");
+          location.href = pathIfAdmin;
+        } else if (userData.role === "karyawan" && !location.pathname.endsWith(pathIfKaryawan)) {
+          console.log("Redirecting to karyawan page (Firestore data)");
+          location.href = pathIfKaryawan;
+        }
         return;
       }
       
-      // Cek dari UID sebagai fallback
-      if (ADMIN_UIDS.has(uid)) {
+      // Fallback ke UID check
+      if (ADMIN_UIDS.has(uid) && !location.pathname.endsWith(pathIfAdmin)) {
         console.log("Redirecting to admin page (UID fallback)");
-        if (!location.pathname.endsWith(pathIfAdmin)) location.href = pathIfAdmin;
-      } else if (KARYAWAN_UIDS.has(uid)) {
+        location.href = pathIfAdmin;
+      } else if (KARYAWAN_UIDS.has(uid) && !location.pathname.endsWith(pathIfKaryawan)) {
         console.log("Redirecting to karyawan page (UID fallback)");
-        if (!location.pathname.endsWith(pathIfKaryawan)) location.href = pathIfKaryawan;
+        location.href = pathIfKaryawan;
       } else {
         console.log("Access denied: no valid role");
         auth.signOut();
@@ -352,16 +373,17 @@
       }
     }
 
+    // Perbaikan fungsi guardPage
     function guardPage(uid, userData, required) {
       console.log("Guard page check:", { uid, userData, required });
       
-      // Cek dari Firestore data pertama
-      if (userData) {
+      // Prioritaskan data dari Firestore
+      if (userData && userData.role) {
         if (required === "admin" && userData.role === "admin") return true;
         if (required === "karyawan" && userData.role === "karyawan") return true;
       }
       
-      // Cek dari UID sebagai fallback
+      // Fallback ke UID check
       const isAdmin = ADMIN_UIDS.has(uid);
       const isKaryawan = KARYAWAN_UIDS.has(uid);
       
@@ -379,7 +401,7 @@
       return true;
     }
 
-    // Auto bootstrap koleksi & dokumen penting tanpa setup manual
+    // Perbaikan fungsi bootstrapCollections
     async function bootstrapCollections(user) {
       console.log("Bootstrapping collections for user:", user.uid);
       
@@ -389,36 +411,41 @@
         const userDoc = await up.get();
         
         if (userDoc.exists) {
-          // Update last login
+          // Update last login dan pastikan field penting ada
+          const userData = userDoc.data();
           await up.set({
-            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+            lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+            email: user.email || userData.email || "",
+            role: userData.role || (ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan")
           }, { merge: true });
           
-          return userDoc.data();
+          return userData;
         } else {
-          // Buat dokumen user baru
+          // Buat dokumen user baru dengan data lengkap
           const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan";
-          
-          await up.set({
+          const userData = {
             email: user.email || "",
             role: userRole,
+            nama: user.email ? user.email.split('@')[0] : "Karyawan",
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-          });
+          };
           
-          return { role: userRole };
+          await up.set(userData);
+          return userData;
         }
       } catch (error) {
         console.error("Error bootstrapping collections:", error);
         // Kembalikan data minimal berdasarkan UID
         return { 
           role: ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan",
-          email: user.email || ""
+          email: user.email || "",
+          nama: user.email ? user.email.split('@')[0] : "Karyawan"
         };
       }
     }
 
-    // Auth routing untuk semua halaman - DIPERBAIKI: Sekarang menggunakan data user dari Firestore
+    // Perbaikan pada auth state changed handler
     auth.onAuthStateChanged(async (user) => {
       console.log("Auth state changed:", user);
       const path = location.pathname.toLowerCase();
@@ -453,14 +480,14 @@
           console.log("Loading karyawan page");
           if (!guardPage(user.uid, userData, "karyawan")) return;
           await ensureNotificationPermission();
-          bindKaryawanPage(user, userData);
+          await bindKaryawanPage(user, userData);
         }
 
         if (path.endsWith("admin.html")) {
           console.log("Loading admin page");
           if (!guardPage(user.uid, userData, "admin")) return;
           await ensureNotificationPermission();
-          bindAdminPage(user, userData);
+          // bindAdminPage(user, userData); // Tidak diimplementasikan di sini
         }
       } catch (error) {
         console.error("Error in auth state change:", error);
@@ -471,7 +498,7 @@
       }
     });
 
-    // Notifikasi browser (tanpa FCM, pakai Notification API murni)
+    // Notifikasi browser
     async function ensureNotificationPermission() {
       try {
         if (!("Notification" in window)) return false;
@@ -506,7 +533,7 @@
 
     // Ambil lokasi
     function getLocation(timeout=8000) {
-      return new Promise((res, rej) {
+      return new Promise((res, rej) => {
         if (!navigator.geolocation) return rej(new Error("Geolokasi tidak didukung."));
         navigator.geolocation.getCurrentPosition(
           (pos) => res({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -531,7 +558,7 @@
     function captureToCanvas(videoEl, canvasEl) {
       const w = videoEl.videoWidth;
       const h = videoEl.videoHeight;
-      const MAXW = 720; // kurangi ukuran
+      const MAXW = 720;
       const scale = Math.min(1, MAXW / w);
       canvasEl.width = Math.round(w * scale);
       canvasEl.height = Math.round(h * scale);
@@ -539,18 +566,16 @@
       ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
     }
 
-    // Kompres gambar ke kualitas kecil (target ≤50 KB)
+    // Kompres gambar
     async function canvasToCompressedBlob(canvas, targetKB=50) {
       let quality = 0.6;
       let blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
       
-      // Turunkan kualitas hingga ukuran ≤ targetKB
       for (let i = 0; i < 5 && blob.size / 1024 > targetKB; i++) {
         quality = Math.max(0.3, quality - 0.1);
         blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
       }
       
-      // Jika masih besar, kurangi resolusi
       if (blob.size / 1024 > targetKB) {
         const scale = Math.sqrt(targetKB * 1024 / blob.size);
         const newWidth = Math.max(320, Math.round(canvas.width * scale));
@@ -568,7 +593,7 @@
       return blob;
     }
 
-    // Upload ke Cloudinary unsigned
+    // Upload ke Cloudinary
     async function uploadToCloudinary(file) {
       const url = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`;
       const form = new FormData();
@@ -607,7 +632,7 @@
         });
     }
 
-    // Notifikasi list untuk karyawan (pengumuman + progres cuti)
+    // Notifikasi list untuk karyawan
     function subscribeNotifForKaryawan(uid, cb) {
       return db.collection("notifs")
         .where("targets", "array-contains-any", ["all", uid])
@@ -629,7 +654,18 @@
       });
     }
 
-    // Profil simpan (nama, alamat, foto profil -> Cloudinary)
+    // Ambil profil
+    async function getProfile(uid) {
+      try {
+        const snap = await db.collection("users").doc(uid).get();
+        return snap.exists ? snap.data() : {};
+      } catch (error) {
+        console.error("Error getting profile:", error);
+        return {};
+      }
+    }
+
+    // Simpan profil
     async function saveProfile(uid, { nama, alamat, pfpUrl }) {
       const d = {};
       if (nama !== undefined) d.nama = nama;
@@ -639,17 +675,25 @@
       await db.collection("users").doc(uid).set(d, { merge: true });
     }
 
-    // Ambil profil
-    async function getProfile(uid) {
-      const snap = await db.collection("users").doc(uid).get();
-      return snap.exists ? snap.data() : {};
-    }
-
-    // Halaman Karyawan bindings - DIPERBAIKI: Menerima parameter userData
+    // Perbaikan fungsi bindKaryawanPage untuk memastikan data dimuat
     async function bindKaryawanPage(user, userData) {
       console.log("Binding karyawan page for:", user.uid, userData);
       
       try {
+        // Tampilkan loading
+        const loadingEl = $("#loading");
+        if (loadingEl) loadingEl.style.display = "flex";
+
+        // Tampilkan informasi pengguna
+        const userInfoEl = $("#userInfo");
+        if (userInfoEl) {
+          userInfoEl.innerHTML = `
+            <p><span class="user-name">${userData.nama || user.email.split('@')[0]}</span></p>
+            <p>Email: ${user.email}</p>
+            <p>Role: ${userData.role || 'Karyawan'}</p>
+          `;
+        }
+
         // Pastikan elemen yang diperlukan ada
         if (!$("#cam") || !$("#canvas") || !$("#preview")) {
           console.error("Elemen kamera tidak ditemukan!");
@@ -664,10 +708,6 @@
         const statusText = $("#statusText");
         const statusChip = $("#statusChip");
         const locText = $("#locText");
-
-        // Tampilkan loading
-        const loadingEl = $("#loading");
-        if (loadingEl) loadingEl.style.display = "flex";
 
         // Guard kamera
         let stream;
@@ -687,11 +727,18 @@
           locText.textContent = "Lokasi tidak aktif";
         }
 
-        // Profil muat
+        // Ambil data profil
         const profile = await getProfile(user.uid);
         if (profile.pfp) $("#pfp").src = profile.pfp;
         if (profile.nama) $("#nama").value = profile.nama;
         if (profile.alamat) $("#alamat").value = profile.alamat;
+
+        // Jika tidak ada nama di profil, gunakan dari userData atau email
+        if (!profile.nama && userData.nama) {
+          $("#nama").value = userData.nama;
+        } else if (!profile.nama) {
+          $("#nama").value = user.email ? user.email.split('@')[0] : "Karyawan";
+        }
 
         // Status window
         async function refreshStatus() {
@@ -756,7 +803,7 @@
           if (loadingEl) loadingEl.style.display = "flex";
           
           try {
-            const blob = await canvasToCompressedBlob(canvas, 50); // Kompres ke ≤50 KB
+            const blob = await canvasToCompressedBlob(canvas, 50);
             const url = await uploadToCloudinary(blob);
             preview.src = url;
             preview.style.display = "block";
@@ -866,7 +913,7 @@
             let pfpUrl;
             const file = $("#pfpFile").files?.[0];
             if (file) {
-              // Kompres foto profil ke ≤50 KB
+              // Kompres foto profil
               const imgEl = document.createElement("img");
               imgEl.src = URL.createObjectURL(file);
               await new Promise(r => imgEl.onload = r);
@@ -876,7 +923,7 @@
               c.height = Math.max(64, Math.round(imgEl.height * scale));
               const ctx = c.getContext("2d");
               ctx.drawImage(imgEl, 0, 0, c.width, c.height);
-              const pfpBlob = await canvasToCompressedBlob(c, 50); // Kompres ke ≤50 KB
+              const pfpBlob = await canvasToCompressedBlob(c, 50);
               pfpUrl = await uploadToCloudinary(pfpBlob);
               $("#pfp").src = pfpUrl;
             }
@@ -909,6 +956,10 @@
       } catch (error) {
         console.error("Error in bindKaryawanPage:", error);
         toast("Error memuat halaman karyawan: " + error.message);
+      } finally {
+        // Sembunyikan loading setelah semua selesai
+        const loadingEl = $("#loading");
+        if (loadingEl) loadingEl.style.display = "none";
       }
     }
   </script>
