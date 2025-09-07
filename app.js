@@ -257,7 +257,7 @@ auth.onAuthStateChanged(async (user) => {
       console.log("Loading karyawan page");
       if (!guardPage(user.uid, userData, "karyawan")) return;
       await ensureNotificationPermission();
-      bindKaryawanPage(user, userData);
+      await bindKaryawanPage(user, userData); // Ditambahkan await
     }
 
     if (path.endsWith("admin.html")) {
@@ -311,6 +311,16 @@ function bindLoginPage() {
       }
     }
   };
+
+  // PERBAIKAN: Tambahkan event listener untuk tombol enter
+  const passwordInput = $("#password");
+  if (passwordInput) {
+    passwordInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        loginBtn.click();
+      }
+    });
+  }
 }
 
 // Jam server live
@@ -595,7 +605,8 @@ async function bindKaryawanPage(user, userData) {
         statusChip.className = "status s-bad";
         return { allowed:false, reason:"out-of-window" };
       } else {
-        statusText.textContent = win.status === "tept" ? "Tepat waktu" : "Terlambat";
+        // PERBAIKAN: Typo "tept" diperbaiki menjadi "tepat"
+        statusText.textContent = win.status === "tepat" ? "Tepat waktu" : "Terlambat";
         statusChip.className = "status " + (win.status === "tepat" ? "s-good" : "s-warn");
         return { allowed:true, status:win.status, serverNow };
       }
