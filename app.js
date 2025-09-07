@@ -1,4 +1,4 @@
-// app.js - Firebase Presensi System FUPA (Fixed Version for Karyawan)
+// app.js - Firebase Presensi System FUPA (Fixed Version for Integration)
 // Inisialisasi Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
@@ -267,7 +267,7 @@ function subscribeRiwayat(uid, cb) {
     });
 }
 
-// Fungsi untuk mendapatkan notifikasi
+// Fungsi untuk mendapatkan notifikasi - DIPERBARUI
 function subscribeNotifForKaryawan(uid, cb) {
   return db.collection("notifs")
     .where("targets", "array-contains-any", ["all", uid])
@@ -282,9 +282,26 @@ function subscribeNotifForKaryawan(uid, cb) {
     });
 }
 
-// Fungsi untuk mengajukan cuti
+// Fungsi untuk mendapatkan notifikasi cuti untuk admin - DIPERBARUI
+function subscribeNotifCutiForAdmin(cb) {
+  return db.collection("notifs")
+    .where("type", "==", "cuti_request")
+    .where("targets", "array-contains-any", ADMIN_UIDS)
+    .orderBy("createdAt", "desc")
+    .limit(50)
+    .onSnapshot(snap => {
+      const arr = [];
+      snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+      cb(arr);
+    }, error => {
+      console.error("Error subscribing to cuti notifications:", error);
+    });
+}
+
+// Fungsi untuk mengajukan cuti - DIPERBARUI
 async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
-  await db.collection("cuti").add({
+  // Simpan data cuti
+  const cutiRef = await db.collection("cuti").add({
     uid, 
     nama, 
     jenis, 
@@ -292,6 +309,100 @@ async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
     catatan: catatan || "",
     status: "menunggu",
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  
+  // Buat notifikasi untuk admin
+  await db.collection("notifs").add({
+    type: "cuti_request",
+    cutiId: cutiRef.id,
+    text: `${nama} mengajukan ${jenis} pada ${tanggal}${catatan ? ': ' + catatan : ''}`,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    from: uid,
+    targets: ADMIN_UIDS,
+    read: false
+  });
+}
+
+// Fungsi untuk memproses permintaan cuti - DIPERBARUI
+async function processCutiRequest(notifId, cutiId, status, adminUid) {
+  // Update status cuti
+  await db.collection("cuti").doc(cutiId).update({ status });
+  
+  // Dapatkan data cuti
+  const cutiDoc = await db.collection("cuti").doc(cutiId).get();
+  const cutiData = cutiDoc.data();
+  
+  // Buat presensi otomatis jika cuti disetujui
+  if (status === "disetujui") {
+    const dateObj = new Date(cutiData.tanggal);
+    if (isNaN(dateObj.getTime())) {
+      dateObj = new Date(); // Fallback jika tanggal invalid
+    }
+    
+    await db.collection("presensi").add({
+      uid: cutiData.uid,
+      nama: cutiData.nama,
+      jenis: cutiData.jenis,
+      status: "cuti",
+      lat: null,
+      lng: null,
+      selfieUrl: "",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      localTime: fmtDateTime(dateObj),
+      ymd: ymd(dateObj)
+    });
+  }
+  
+  // Kirim notifikasi ke karyawan
+  await db.collection("notifs").add({
+    type: "cuti_response",
+    text: `Permintaan ${cutiData.jenis} Anda pada ${cutiData.tanggal} telah ${status}`,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    from: adminUid,
+    targets: [cutiData.uid],
+    read: false
+  });
+  
+  // Hapus notifikasi permintaan cuti
+  await db.collection("notifs").doc(notifId).delete();
+}
+
+// Fungsi untuk mengirim pengumuman - DIPERBARUI
+async function kirimPengumuman(text, adminUid) {
+  await db.collection("notifs").add({
+    type: "announce",
+    text,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    from: adminUid,
+    targets: ["all"],
+    read: false
+  });
+}
+
+// Fungsi untuk mengatur mode hari - DIPERBARUI
+async function setHariMode(mode, dateStr, adminUid) {
+  await db.collection("_settings").doc("today").set({
+    mode, 
+    date: dateStr
+  }, { merge: true });
+  
+  // Kirim notifikasi override ke semua karyawan
+  let message = "";
+  if (mode === "forceOn") {
+    message = "Admin memaksa wajib presensi hari ini (" + dateStr + ").";
+  } else if (mode === "forceOff") {
+    message = "Admin memaksa tidak wajib presensi hari ini (" + dateStr + ").";
+  } else {
+    message = "Pengaturan presensi kembali ke mode otomatis (Minggu non-presensi) untuk hari ini (" + dateStr + ").";
+  }
+  
+  await db.collection("notifs").add({
+    type: "override",
+    text: message,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    from: adminUid,
+    targets: ["all"],
+    read: false
   });
 }
 
@@ -377,7 +488,7 @@ function bindLoginPage() {
   });
 }
 
-// Fungsi untuk bind halaman karyawan
+// Fungsi untuk bind halaman karyawan - DIPERBARUI
 async function bindKaryawanPage(user, userData) {
   try {
     // Tampilkan loading
@@ -548,7 +659,7 @@ async function bindKaryawanPage(user, userData) {
       });
     });
     
-    // Notifikasi
+    // Notifikasi - DIPERBARUI
     $("#notifBtn").onclick = () => $("#notifDlg").showModal();
     const unsubNotif = subscribeNotifForKaryawan(user.uid, (items) => {
       const list = $("#notifList");
@@ -570,18 +681,33 @@ async function bindKaryawanPage(user, userData) {
       
       items.forEach(it => {
         const el = document.createElement("div");
-        el.className = "card";
-        const sub = it.type === "announce" ? "Pengumuman" : "Info";
+        el.className = "notification-item";
+        const sub = it.type === "announce" ? "Pengumuman" : 
+                   it.type === "cuti_response" ? "Balasan Cuti" : 
+                   it.type === "override" ? "Pengumuman Jadwal" : "Info";
+        
         el.innerHTML = `
-          <div style="font-weight:700">${sub}</div>
-          <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
-          <div style="font-size:12px; opacity:.6; margin-top:6px">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
+          <div class="notification-content">
+            <div style="font-weight:700">${sub}</div>
+            <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
+            <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
+          </div>
+          <button class="notification-delete" data-id="${it.id}">
+            <span class="material-symbols-rounded">close</span>
+          </button>
         `;
+        
+        // Tambahkan event listener untuk hapus notifikasi
+        el.querySelector(".notification-delete").onclick = async () => {
+          await db.collection("notifs").doc(it.id).delete();
+          toast("Notifikasi dihapus.");
+        };
+        
         list.appendChild(el);
       });
     });
     
-    // Cuti
+    // Cuti - DIPERBARUI
     $("#cutiFab").onclick = () => $("#cutiDlg").showModal();
     $("#ajukanCutiBtn").onclick = async () => {
       const jenis = $("#cutiJenis").value;
@@ -672,6 +798,124 @@ async function bindKaryawanPage(user, userData) {
   }
 }
 
+// Fungsi untuk bind halaman admin - DIPERBARUI
+async function bindAdminPage(user, userData) {
+  try {
+    // Tampilkan loading
+    $("#loading").style.display = "flex";
+    
+    // Muat profil
+    const profile = await getProfile(user.uid);
+    if (profile.pfp) $("#pfp").src = profile.pfp;
+    if (profile.nama) $("#nama").value = profile.nama;
+    if (profile.alamat) $("#alamat").value = profile.alamat;
+    
+    // Notifikasi (cuti) - DIPERBARUI
+    $("#notifBtn").onclick = () => $("#notifDlg").showModal();
+    const cutiList = $("#cutiList");
+    const unsubNotifCuti = subscribeNotifCutiForAdmin((items) => {
+      cutiList.innerHTML = "";
+      
+      // Update badge notifikasi
+      const badge = $("#notifBadge");
+      if (items.length > 0) {
+        badge.textContent = items.length;
+        badge.style.display = "grid";
+      } else {
+        badge.style.display = "none";
+      }
+      
+      items.forEach(it => {
+        const row = document.createElement("div");
+        row.className = "cuti-request";
+        row.innerHTML = `
+          <div class="notification-content">
+            <div style="font-weight:700">${it.text || 'Permintaan cuti'}</div>
+            <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ''}</div>
+          </div>
+          <div class="cuti-actions">
+            <button class="btn" data-act="approveCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}">
+              <span class="material-symbols-rounded">check</span> Setujui
+            </button>
+            <button class="btn" data-act="rejectCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}" style="background:#222">
+              <span class="material-symbols-rounded">close</span> Tolak
+            </button>
+            <button class="notification-delete" data-notifid="${it.id}">
+              <span class="material-symbols-rounded">close</span>
+            </button>
+          </div>
+        `;
+        
+        cutiList.appendChild(row);
+      });
+      
+      // Bind actions
+      $$("[data-act='approveCuti']").forEach(b => b.onclick = async () => {
+        $("#loading").style.display = "flex";
+        await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "disetujui", user.uid);
+        $("#loading").style.display = "none";
+        toast("Cuti disetujui.");
+      });
+      
+      $$("[data-act='rejectCuti']").forEach(b => b.onclick = async () => {
+        $("#loading").style.display = "flex";
+        await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "ditolak", user.uid);
+        $("#loading").style.display = "none";
+        toast("Cuti ditolak.");
+      });
+      
+      $$(".notification-delete").forEach(b => b.onclick = async () => {
+        $("#loading").style.display = "flex";
+        await db.collection("notifs").doc(b.dataset.notifid).delete();
+        $("#loading").style.display = "none";
+        toast("Notifikasi dihapus.");
+      });
+    });
+
+    // Pengumuman - DIPERBARUI
+    $("#announceFab").onclick = async () => {
+      const text = prompt("Tulis pengumuman:");
+      if (!text) return;
+      
+      $("#loading").style.display = "flex";
+      await kirimPengumuman(text, user.uid);
+      $("#loading").style.display = "none";
+      toast("Pengumuman terkirim.");
+    };
+    
+    $("#sendAnnounce").onclick = async () => {
+      const text = $("#announceText").value.trim();
+      if (!text) { toast("Tulis isi pengumuman."); return; }
+      
+      $("#loading").style.display = "flex";
+      await kirimPengumuman(text, user.uid);
+      $("#announceText").value = "";
+      $("#loading").style.display = "none";
+      toast("Pengumuman terkirim.");
+    };
+
+    // Jadwal wajib / tidak - DIPERBARUI
+    $("#saveSchedule").onclick = async () => {
+      const mode = $("#wajibHari").value;
+      const now = await getServerTime();
+      const todayYMD = ymd(now);
+      
+      $("#loading").style.display = "flex";
+      await setHariMode(mode, todayYMD, user.uid);
+      $("#loading").style.display = "none";
+      toast("Pengaturan hari tersimpan.");
+    };
+
+    // Sembunyikan loading
+    $("#loading").style.display = "none";
+
+  } catch (error) {
+    console.error("Error in bindAdminPage:", error);
+    toast("Error memuat halaman admin: " + error.message);
+    $("#loading").style.display = "none";
+  }
+}
+
 // Auth state change handler
 auth.onAuthStateChanged(async (user) => {
   const path = window.location.pathname;
@@ -711,13 +955,12 @@ auth.onAuthStateChanged(async (user) => {
       await bindKaryawanPage(user, { role });
     }
     
-    // Halaman admin tidak diubah sesuai permintaan
     if (path.endsWith("admin.html")) {
       if (role !== "admin") {
         window.location.href = "index.html";
         return;
       }
-      // Tidak mengubah bagian admin
+      await bindAdminPage(user, { role });
     }
   } catch (error) {
     console.error("Error in auth state change:", error);
