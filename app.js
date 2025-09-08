@@ -286,12 +286,17 @@ function subscribeNotifForKaryawan(uid, cb) {
 function subscribeNotifCutiForAdmin(cb) {
   return db.collection("notifs")
     .where("type", "==", "cuti_request")
-    .where("targets", "array-contains-any", ADMIN_UIDS)
     .orderBy("createdAt", "desc")
-    .limit(50)
     .onSnapshot(snap => {
       const arr = [];
-      snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+      snap.forEach(d => {
+        const data = d.data();
+        // Pastikan notifikasi ditujukan untuk admin
+        if (data.targets && (data.targets.includes("all") || 
+            data.targets.some(target => ADMIN_UIDS.includes(target)))) {
+          arr.push({ id: d.id, ...data });
+        }
+      });
       cb(arr);
     }, error => {
       console.error("Error subscribing to cuti notifications:", error);
@@ -325,85 +330,202 @@ async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
 
 // Fungsi untuk memproses permintaan cuti - DIPERBARUI
 async function processCutiRequest(notifId, cutiId, status, adminUid) {
-  // Update status cuti
-  await db.collection("cuti").doc(cutiId).update({ status });
-  
-  // Dapatkan data cuti
-  const cutiDoc = await db.collection("cuti").doc(cutiId).get();
-  const cutiData = cutiDoc.data();
-  
-  // Buat presensi otomatis jika cuti disetujui
-  if (status === "disetujui") {
-    const dateObj = new Date(cutiData.tanggal);
-    if (isNaN(dateObj.getTime())) {
-      dateObj = new Date(); // Fallback jika tanggal invalid
+  try {
+    // Update status cuti
+    await db.collection("cuti").doc(cutiId).update({ 
+      status,
+      processedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      processedBy: adminUid
+    });
+    
+    // Dapatkan data cuti
+    const cutiDoc = await db.collection("cuti").doc(cutiId).get();
+    const cutiData = cutiDoc.data();
+    
+    // Buat presensi otomatis jika cuti disetujui
+    if (status === "disetujui") {
+      let dateObj = new Date(cutiData.tanggal);
+      if (isNaN(dateObj.getTime())) {
+        dateObj = new Date(); // Fallback jika tanggal invalid
+      }
+      
+      await db.collection("presensi").add({
+        uid: cutiData.uid,
+        nama: cutiData.nama,
+        jenis: cutiData.jenis,
+        status: "cuti",
+        lat: null,
+        lng: null,
+        selfieUrl: "",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        localTime: fmtDateTime(dateObj),
+        ymd: ymd(dateObj),
+        keterangan: cutiData.catatan || ""
+      });
     }
     
-    await db.collection("presensi").add({
-      uid: cutiData.uid,
-      nama: cutiData.nama,
-      jenis: cutiData.jenis,
-      status: "cuti",
-      lat: null,
-      lng: null,
-      selfieUrl: "",
+    // Kirim notifikasi ke karyawan
+    await db.collection("notifs").add({
+      type: "cuti_response",
+      text: `Permintaan ${cutiData.jenis} Anda pada ${cutiData.tanggal} telah ${status}`,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      localTime: fmtDateTime(dateObj),
-      ymd: ymd(dateObj)
+      from: adminUid,
+      targets: [cutiData.uid],
+      read: false
     });
+    
+    // Hapus notifikasi permintaan cuti
+    await db.collection("notifs").doc(notifId).delete();
+    
+    return true;
+  } catch (error) {
+    console.error("Error processing cuti request:", error);
+    throw error;
   }
-  
-  // Kirim notifikasi ke karyawan
-  await db.collection("notifs").add({
-    type: "cuti_response",
-    text: `Permintaan ${cutiData.jenis} Anda pada ${cutiData.tanggal} telah ${status}`,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    from: adminUid,
-    targets: [cutiData.uid],
-    read: false
-  });
-  
-  // Hapus notifikasi permintaan cuti
-  await db.collection("notifs").doc(notifId).delete();
 }
 
 // Fungsi untuk mengirim pengumuman - DIPERBARUI
 async function kirimPengumuman(text, adminUid) {
-  await db.collection("notifs").add({
-    type: "announce",
-    text,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    from: adminUid,
-    targets: ["all"],
-    read: false
-  });
+  try {
+    await db.collection("notifs").add({
+      type: "announce",
+      text: text,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      from: adminUid,
+      targets: ["all"],
+      read: false
+    });
+    return true;
+  } catch (error) {
+    console.error("Error sending announcement:", error);
+    throw error;
+  }
 }
 
 // Fungsi untuk mengatur mode hari - DIPERBARUI
 async function setHariMode(mode, dateStr, adminUid) {
-  await db.collection("_settings").doc("today").set({
-    mode, 
-    date: dateStr
-  }, { merge: true });
-  
-  // Kirim notifikasi override ke semua karyawan
-  let message = "";
-  if (mode === "forceOn") {
-    message = "Admin memaksa wajib presensi hari ini (" + dateStr + ").";
-  } else if (mode === "forceOff") {
-    message = "Admin memaksa tidak wajib presensi hari ini (" + dateStr + ").";
-  } else {
-    message = "Pengaturan presensi kembali ke mode otomatis (Minggu non-presensi) untuk hari ini (" + dateStr + ").";
+  try {
+    await db.collection("_settings").doc("today").set({
+      mode, 
+      date: dateStr,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: adminUid
+    }, { merge: true });
+    
+    // Kirim notifikasi override ke semua karyawan
+    let message = "";
+    if (mode === "forceOn") {
+      message = "Admin memaksa wajib presensi hari ini (" + dateStr + ").";
+    } else if (mode === "forceOff") {
+      message = "Admin memaksa tidak wajib presensi hari ini (" + dateStr + ").";
+    } else {
+      message = "Pengaturan presensi kembali ke mode otomatis (Minggu non-presensi) untuk hari ini (" + dateStr + ").";
+    }
+    
+    await db.collection("notifs").add({
+      type: "override",
+      text: message,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      from: adminUid,
+      targets: ["all"],
+      read: false
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("Error setting day mode:", error);
+    throw error;
   }
-  
-  await db.collection("notifs").add({
-    type: "override",
-    text: message,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-    from: adminUid,
-    targets: ["all"],
-    read: false
-  });
+}
+
+// Fungsi untuk override presensi oleh admin
+async function overridePresensi(tanggal, status, adminUid) {
+  try {
+    await db.collection("overrides").doc(tanggal).set({
+      tanggal: tanggal,
+      status: status,
+      dibuatPada: new Date(),
+      oleh: adminUid
+    });
+    
+    // Kirim notifikasi ke semua karyawan
+    await db.collection("notifs").add({
+      type: "override",
+      text: `Admin telah mengubah status presensi tanggal ${tanggal} menjadi: ${status}`,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      from: adminUid,
+      targets: ["all"],
+      read: false
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("Error overriding presensi:", error);
+    throw error;
+  }
+}
+
+// Fungsi untuk menghapus notifikasi
+async function hapusNotifikasi(notifId) {
+  try {
+    await db.collection("notifs").doc(notifId).delete();
+    return true;
+  } catch (error) {
+    console.error("Error deleting notification:", error);
+    throw error;
+  }
+}
+
+// Fungsi untuk menandai notifikasi sebagai sudah dibaca
+async function tandaiNotifikasiDibaca(notifId) {
+  try {
+    await db.collection("notifs").doc(notifId).update({
+      read: true,
+      readAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    throw error;
+  }
+}
+
+// Fungsi untuk mendapatkan daftar karyawan
+async function getDaftarKaryawan() {
+  try {
+    const snapshot = await db.collection("users")
+      .where("role", "==", "karyawan")
+      .get();
+    
+    const karyawan = [];
+    snapshot.forEach(doc => {
+      karyawan.push({ id: doc.id, ...doc.data() });
+    });
+    
+    return karyawan;
+  } catch (error) {
+    console.error("Error getting employees:", error);
+    return [];
+  }
+}
+
+// Fungsi untuk mengupdate data karyawan
+async function updateKaryawan(uid, data) {
+  try {
+    const updateData = {};
+    if (data.nama) updateData.nama = data.nama;
+    if (data.email) updateData.email = data.email;
+    if (data.jabatan) updateData.jabatan = data.jabatan;
+    if (data.alamat) updateData.alamat = data.alamat;
+    
+    updateData.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    
+    await db.collection("users").doc(uid).update(updateData);
+    return true;
+  } catch (error) {
+    console.error("Error updating employee:", error);
+    throw error;
+  }
 }
 
 // Fungsi untuk mendapatkan profil
@@ -699,7 +821,7 @@ async function bindKaryawanPage(user, userData) {
         
         // Tambahkan event listener untuk hapus notifikasi
         el.querySelector(".notification-delete").onclick = async () => {
-          await db.collection("notifs").doc(it.id).delete();
+          await hapusNotifikasi(it.id);
           toast("Notifikasi dihapus.");
         };
         
@@ -866,7 +988,7 @@ async function bindAdminPage(user, userData) {
       
       $$(".notification-delete").forEach(b => b.onclick = async () => {
         $("#loading").style.display = "flex";
-        await db.collection("notifs").doc(b.dataset.notifid).delete();
+        await hapusNotifikasi(b.dataset.notifid);
         $("#loading").style.display = "none";
         toast("Notifikasi dihapus.");
       });
@@ -904,6 +1026,83 @@ async function bindAdminPage(user, userData) {
       await setHariMode(mode, todayYMD, user.uid);
       $("#loading").style.display = "none";
       toast("Pengaturan hari tersimpan.");
+    };
+
+    // Kelola Karyawan
+    $("#kelolaKaryawanBtn").onclick = () => $("#kelolaKaryawanDlg").showModal();
+    
+    // Muat daftar karyawan
+    const loadDaftarKaryawan = async () => {
+      const karyawan = await getDaftarKaryawan();
+      const table = $("#karyawanTable");
+      
+      table.innerHTML = "";
+      karyawan.forEach(k => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${k.nama || "-"}</td>
+          <td>${k.email || "-"}</td>
+          <td>${k.jabatan || "-"}</td>
+          <td>
+            <button class="btn btn-small" data-action="edit" data-uid="${k.id}">Edit</button>
+            <button class="btn btn-small btn-danger" data-action="delete" data-uid="${k.id}">Hapus</button>
+          </td>
+        `;
+        table.appendChild(row);
+      });
+      
+      // Tambahkan event listener untuk edit dan hapus
+      $$("[data-action='edit']").forEach(btn => {
+        btn.onclick = () => editKaryawan(btn.dataset.uid);
+      });
+      
+      $$("[data-action='delete']").forEach(btn => {
+        btn.onclick = () => hapusKaryawanConfirm(btn.dataset.uid);
+      });
+    };
+    
+    // Load daftar karyawan pertama kali
+    await loadDaftarKaryawan();
+    
+    // Tambah karyawan
+    $("#tambahKaryawanBtn").onclick = async () => {
+      const data = {
+        nama: $("#karyawanNama").value.trim(),
+        email: $("#karyawanEmail").value.trim(),
+        password: $("#karyawanPassword").value,
+        jabatan: $("#karyawanJabatan").value.trim(),
+        alamat: $("#karyawanAlamat").value.trim()
+      };
+      
+      if (!data.nama || !data.email || !data.password) {
+        toast("Nama, email, dan password wajib diisi");
+        return;
+      }
+      
+      $("#loading").style.display = "flex";
+      
+      try {
+        // Buat user authentication
+        const userCredential = await auth.createUserWithEmailAndPassword(data.email, data.password);
+        
+        // Simpan data ke Firestore
+        await db.collection("users").doc(userCredential.user.uid).set({
+          nama: data.nama,
+          email: data.email,
+          role: "karyawan",
+          jabatan: data.jabatan,
+          alamat: data.alamat || "",
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        toast("Karyawan berhasil ditambah");
+        $("#tambahKaryawanForm").reset();
+        await loadDaftarKaryawan();
+      } catch (error) {
+        toast("Gagal menambah karyawan: " + error.message);
+      } finally {
+        $("#loading").style.display = "none";
+      }
     };
 
     // Sembunyikan loading
