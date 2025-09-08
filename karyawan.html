@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
@@ -167,17 +166,48 @@
     <div class="user-info" id="userInfo">
       <p>Memuat data pengguna...</p>
     </div>
+    
+    <div class="grid">
+      <section class="card">
+        <h3 style="margin:0 0 8px">Ambil presensi</h3>
+        <div class="row" style="justify-content:space-between">
+          <span id="statusChip" class="status s-warn"><span class="material-symbols-rounded">schedule</span><span id="statusText">Menunggu</span></span>
+          <span class="chip"><span class="material-symbols-rounded">pin_drop</span><span id="locText">Koordinat belum aktif</span></span>
+        </div>
+        <div style="margin-top:10px">
+          <video id="cam" playsinline autoplay muted></video>
+          <canvas id="canvas" style="display:none"></canvas>
+          <img id="preview" style="display:none" alt="Preview selfie" />
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="input">
+            <span class="material-symbols-rounded">assignment</span>
+            <select id="jenis">
+              <option value="berangkat">Presensi berangkat</option>
+              <option value="pulang">Presensi pulang</option>
+            </select>
+          </div>
+          <button id="snapBtn" class="btn"><span class="material-symbols-rounded">photo_camera</span> Ambil selfie</button>
+          <button id="uploadBtn" class="btn"><span class="material-symbols-rounded">cloud_upload</span> Upload</button>
+        </div>
+        <div class="hint" style="opacity:.8;margin-top:8px">
+          Presensi hanya pada 04:30–05:30 (berangkat) dan 10:00–11:00 (pulang). Di luar ini akan ditolak atau ditandai terlambat.
+        </div>
+      </section>
 
+      <section class="card">
+        <h3 style="margin:0 0 8px">Riwayat singkat</h3>
+        <div id="logList" style="display:grid; gap:8px"></div>
+      </section>
+    </div>
   </div>
 
   <!-- FAB cuti -->
-
   <button class="fab" id="cutiFab" title="Ajukan cuti">
     <span class="material-symbols-rounded">event</span>
   </button>
 
   <!-- Dialog profil -->
-
   <dialog id="profileDlg">
     <div class="dlg-head">
       <div class="row"><span class="material-symbols-rounded">account_circle</span><b>Profil</b></div>
@@ -200,7 +230,6 @@
   </dialog>
 
   <!-- Dialog notifikasi -->
-
   <dialog id="notifDlg">
     <div class="dlg-head">
       <div class="row"><span class="material-symbols-rounded">notifications</span><b>Notifikasi</b></div>
@@ -210,7 +239,6 @@
   </dialog>
 
   <!-- Dialog cuti -->
-
   <dialog id="cutiDlg">
     <div class="dlg-head">
       <div class="row"><span class="material-symbols-rounded">event</span><b>Ajukan cuti</b></div>
@@ -237,11 +265,8 @@
   <div class="toast" id="toast"></div>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-
   <script>
     // Firebase config
     const firebaseConfig = {
@@ -259,11 +284,11 @@
     const UPLOAD_PRESET = "presensi_unsigned";
 
     // UID roles
-    const ADMIN_UIDS = new Set([
+    const ADMIN_UIDS = [
       "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
       "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
-    ]);
-    const KARYAWAN_UIDS = new Set([
+    ];
+    const KARYAWAN_UIDS = [
       "JX6WFtYgrybnJevkoIBuWiLFqsK2", // cabangx@fupa.id
       "UGhVLQv436NBv0Obu3qgYPQpYO33", // cabang1@fupa.id
       "tuH94yTWqmg5hD6keVdK76NP7E53", // cabang2@fupa.id
@@ -275,7 +300,7 @@
       "4MTWbPMerdVLxnMCpnyChVcbgzX2", // cabang8@fupa.id
       "8yPW5dTZ5JdCpAStrEJwogxdUJ63", // cabang9@fupa.id
       "Z69r3d8OjTcf7NkbJsOyiAgH28P2"  // cabang10@fupa.id
-    ]);
+    ];
 
     // Inisialisasi Firebase
     firebase.initializeApp(firebaseConfig);
@@ -365,10 +390,10 @@
       }
       
       // Fallback ke UID check
-      if (ADMIN_UIDS.has(uid) && !location.pathname.endsWith("admin.html")) {
+      if (ADMIN_UIDS.includes(uid) && !location.pathname.endsWith("admin.html")) {
         console.log("Redirecting to admin page (UID fallback)");
         location.href = "admin.html";
-      } else if (KARYAWAN_UIDS.has(uid) && !location.pathname.endsWith("karyawan.html")) {
+      } else if (KARYAWAN_UIDS.includes(uid) && !location.pathname.endsWith("karyawan.html")) {
         console.log("Redirecting to karyawan page (UID fallback)");
         location.href = "karyawan.html";
       } else {
@@ -389,8 +414,8 @@
       }
       
       // Fallback ke UID check
-      const isAdmin = ADMIN_UIDS.has(uid);
-      const isKaryawan = KARYAWAN_UIDS.has(uid);
+      const isAdmin = ADMIN_UIDS.includes(uid);
+      const isKaryawan = KARYAWAN_UIDS.includes(uid);
       
       if (required === "admin" && !isAdmin) { 
         console.log("Access denied: not admin");
@@ -421,13 +446,13 @@
           await up.set({
             lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
             email: user.email || userData.email || "",
-            role: userData.role || (ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan")
+            role: userData.role || (ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan")
           }, { merge: true });
           
           return userData;
         } else {
           // Buat dokumen user baru dengan data lengkap
-          const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan";
+          const userRole = ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan";
           const userData = {
             email: user.email || "",
             role: userRole,
@@ -443,7 +468,7 @@
         console.error("Error bootstrapping collections:", error);
         // Kembalikan data minimal berdasarkan UID
         return { 
-          role: ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan",
+          role: ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan",
           email: user.email || "",
           nama: user.email ? user.email.split('@')[0] : "Karyawan"
         };
@@ -619,7 +644,7 @@
         text: `${nama} mengajukan ${jenis} pada ${tanggal}${catatan ? ': ' + catatan : ''}`,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         from: uid,
-        targets: Array.from(ADMIN_UIDS), // Hanya untuk admin
+        targets: ADMIN_UIDS, // Hanya untuk admin
         read: false
       });
     }
@@ -1011,6 +1036,5 @@
       }
     });
   </script>
-
 </body>
 </html>
