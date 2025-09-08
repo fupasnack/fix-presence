@@ -284,11 +284,11 @@
     const UPLOAD_PRESET = "presensi_unsigned";
 
     // UID roles
-    const ADMIN_UIDS = new Set([
+    const ADMIN_UIDS = [
       "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
       "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
-    ]);
-    const KARYAWAN_UIDS = new Set([
+    ];
+    const KARYAWAN_UIDS = [
       "JX6WFtYgrybnJevkoIBuWiLFqsK2", // cabangx@fupa.id
       "UGhVLQv436NBv0Obu3qgYPQpYO33", // cabang1@fupa.id
       "tuH94yTWqmg5hD6keVdK76NP7E53", // cabang2@fupa.id
@@ -300,7 +300,7 @@
       "4MTWbPMerdVLxnMCpnyChVcbgzX2", // cabang8@fupa.id
       "8yPW5dTZ5JdCpAStrEJwogxdUJ63", // cabang9@fupa.id
       "Z69r3d8OjTcf7NkbJsOyiAgH28P2"  // cabang10@fupa.id
-    ]);
+    ];
 
     // Inisialisasi Firebase
     firebase.initializeApp(firebaseConfig);
@@ -390,10 +390,10 @@
       }
       
       // Fallback ke UID check
-      if (ADMIN_UIDS.has(uid) && !location.pathname.endsWith("admin.html")) {
+      if (ADMIN_UIDS.includes(uid) && !location.pathname.endsWith("admin.html")) {
         console.log("Redirecting to admin page (UID fallback)");
         location.href = "admin.html";
-      } else if (KARYAWAN_UIDS.has(uid) && !location.pathname.endsWith("karyawan.html")) {
+      } else if (KARYAWAN_UIDS.includes(uid) && !location.pathname.endsWith("karyawan.html")) {
         console.log("Redirecting to karyawan page (UID fallback)");
         location.href = "karyawan.html";
       } else {
@@ -414,8 +414,8 @@
       }
       
       // Fallback ke UID check
-      const isAdmin = ADMIN_UIDS.has(uid);
-      const isKaryawan = KARYAWAN_UIDS.has(uid);
+      const isAdmin = ADMIN_UIDS.includes(uid);
+      const isKaryawan = KARYAWAN_UIDS.includes(uid);
       
       if (required === "admin" && !isAdmin) { 
         console.log("Access denied: not admin");
@@ -446,13 +446,13 @@
           await up.set({
             lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
             email: user.email || userData.email || "",
-            role: userData.role || (ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan")
+            role: userData.role || (ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan")
           }, { merge: true });
           
           return userData;
         } else {
           // Buat dokumen user baru dengan data lengkap
-          const userRole = ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan";
+          const userRole = ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan";
           const userData = {
             email: user.email || "",
             role: userRole,
@@ -468,7 +468,7 @@
         console.error("Error bootstrapping collections:", error);
         // Kembalikan data minimal berdasarkan UID
         return { 
-          role: ADMIN_UIDS.has(user.uid) ? "admin" : "karyawan",
+          role: ADMIN_UIDS.includes(user.uid) ? "admin" : "karyawan",
           email: user.email || "",
           nama: user.email ? user.email.split('@')[0] : "Karyawan"
         };
@@ -644,7 +644,7 @@
         text: `${nama} mengajukan ${jenis} pada ${tanggal}${catatan ? ': ' + catatan : ''}`,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         from: uid,
-        targets: Array.from(ADMIN_UIDS), // Hanya untuk admin
+        targets: ADMIN_UIDS, // Hanya untuk admin
         read: false
       });
     }
