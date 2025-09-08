@@ -1,4 +1,4 @@
-// app.js - Firebase Presensi System FUPA (Fixed Version for Integration)
+// app.js - Firebase Presensi System FUPA
 // Inisialisasi Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
@@ -267,7 +267,7 @@ function subscribeRiwayat(uid, cb) {
     });
 }
 
-// Fungsi untuk mendapatkan notifikasi - DIPERBARUI
+// Fungsi untuk mendapatkan notifikasi
 function subscribeNotifForKaryawan(uid, cb) {
   return db.collection("notifs")
     .where("targets", "array-contains-any", ["all", uid])
@@ -282,7 +282,7 @@ function subscribeNotifForKaryawan(uid, cb) {
     });
 }
 
-// Fungsi untuk mendapatkan notifikasi cuti untuk admin - DIPERBARUI
+// Fungsi untuk mendapatkan notifikasi cuti untuk admin
 function subscribeNotifCutiForAdmin(cb) {
   return db.collection("notifs")
     .where("type", "==", "cuti_request")
@@ -303,7 +303,7 @@ function subscribeNotifCutiForAdmin(cb) {
     });
 }
 
-// Fungsi untuk mengajukan cuti - DIPERBARUI
+// Fungsi untuk mengajukan cuti
 async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
   // Simpan data cuti
   const cutiRef = await db.collection("cuti").add({
@@ -328,7 +328,7 @@ async function ajukanCuti(uid, nama, jenis, tanggal, catatan) {
   });
 }
 
-// Fungsi untuk memproses permintaan cuti - DIPERBARUI
+// Fungsi untuk memproses permintaan cuti
 async function processCutiRequest(notifId, cutiId, status, adminUid) {
   try {
     // Update status cuti
@@ -384,7 +384,7 @@ async function processCutiRequest(notifId, cutiId, status, adminUid) {
   }
 }
 
-// Fungsi untuk mengirim pengumuman - DIPERBARUI
+// Fungsi untuk mengirim pengumuman
 async function kirimPengumuman(text, adminUid) {
   try {
     await db.collection("notifs").add({
@@ -402,7 +402,7 @@ async function kirimPengumuman(text, adminUid) {
   }
 }
 
-// Fungsi untuk mengatur mode hari - DIPERBARUI
+// Fungsi untuk mengatur mode hari
 async function setHariMode(mode, dateStr, adminUid) {
   try {
     await db.collection("_settings").doc("today").set({
@@ -610,511 +610,6 @@ function bindLoginPage() {
   });
 }
 
-// Fungsi untuk bind halaman karyawan - DIPERBARUI
-async function bindKaryawanPage(user, userData) {
-  try {
-    // Tampilkan loading
-    $("#loading").style.display = "flex";
-    
-    // Inisialisasi elemen
-    const video = $("#cam");
-    const canvas = $("#canvas");
-    const preview = $("#preview");
-    const jenisSel = $("#jenis");
-    const statusText = $("#statusText");
-    const statusChip = $("#statusChip");
-    const locText = $("#locText");
-    
-    // Pastikan elemen ada
-    if (!video || !canvas || !preview || !jenisSel || !statusText || !statusChip || !locText) {
-      throw new Error("Elemen yang diperlukan tidak ditemukan!");
-    }
-    
-    // Mulai kamera
-    let stream;
-    try {
-      stream = await startCamera(video);
-    } catch (e) {
-      $("#loading").style.display = "none";
-      return;
-    }
-    
-    // Dapatkan lokasi
-    let coords = null;
-    try {
-      coords = await getLocation();
-      locText.textContent = `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
-    } catch {
-      locText.textContent = "Lokasi tidak aktif";
-    }
-    
-    // Muat profil
-    const profile = await getProfile(user.uid);
-    if (profile.pfp) $("#pfp").src = profile.pfp;
-    if (profile.nama) $("#nama").value = profile.nama;
-    if (profile.alamat) $("#alamat").value = profile.alamat;
-    
-    // Jika tidak ada nama di profil, gunakan dari userData atau email
-    if (!profile.nama && userData.nama) {
-      $("#nama").value = userData.nama;
-    } else if (!profile.nama) {
-      $("#nama").value = user.email ? user.email.split('@')[0] : "Karyawan";
-    }
-    
-    // Status window
-    async function refreshStatus() {
-      try {
-        const serverNow = await getServerTime();
-        const today = ymd(serverNow);
-        const override = await getScheduleOverride(today);
-        const isSunday = serverNow.getDay() === 0;
-        const jenis = jenisSel.value;
-        
-        let wajib = true;
-        if (override === "forceOn") wajib = true;
-        else if (override === "forceOff") wajib = false;
-        else wajib = !isSunday;
-        
-        if (!wajib) {
-          statusText.textContent = "Hari ini tidak wajib presensi";
-          statusChip.className = "status s-warn";
-          return { allowed: false, reason: "not-required" };
-        }
-        
-        const win = inWindow(serverNow, jenis, 30);
-        if (!win.allowed) {
-          statusText.textContent = "Di luar jam presensi";
-          statusChip.className = "status s-bad";
-          return { allowed: false, reason: "out-of-window" };
-        } else {
-          statusText.textContent = win.status === "tepat" ? "Tepat waktu" : "Terlambat";
-          statusChip.className = "status " + (win.status === "tepat" ? "s-good" : "s-warn");
-          return { allowed: true, status: win.status, serverNow };
-        }
-      } catch (error) {
-        console.error("Error refreshing status:", error);
-        return { allowed: false, reason: "error" };
-      }
-    }
-    
-    let lastStatus = await refreshStatus();
-    setInterval(async () => {
-      lastStatus = await refreshStatus();
-    }, 30000);
-    
-    // Event listener untuk tombol snap
-    $("#snapBtn").onclick = () => {
-      captureToCanvas(video, canvas);
-      canvas.style.display = "block";
-      preview.style.display = "none";
-      toast("Foto diambil. Anda bisa langsung upload.");
-    };
-    
-    // Event listener untuk tombol upload
-    $("#uploadBtn").onclick = async () => {
-      lastStatus = await refreshStatus();
-      if (!lastStatus.allowed) {
-        toast("Presensi ditolak: di luar jadwal atau tidak wajib.");
-        return;
-      }
-      if (!coords) {
-        toast("Lokasi belum aktif.");
-        return;
-      }
-      if (canvas.width === 0 || canvas.height === 0) {
-        toast("Ambil selfie dulu.");
-        return;
-      }
-      
-      $("#loading").style.display = "flex";
-      
-      try {
-        const blob = await canvasToCompressedBlob(canvas, 50);
-        const url = await uploadToCloudinary(blob);
-        preview.src = url;
-        preview.style.display = "block";
-        
-        const nama = ($("#nama")?.value || profile.nama || user.email.split("@")[0]).trim();
-        const jenis = jenisSel.value;
-        const status = lastStatus.status === "tepat" ? "tepat" : "terlambat";
-        
-        await savePresensi({
-          uid: user.uid,
-          nama,
-          jenis,
-          status,
-          lat: coords.lat,
-          lng: coords.lng,
-          selfieUrl: url,
-          serverDate: lastStatus.serverNow
-        });
-        
-        toast("Presensi tersimpan.");
-      } catch (e) {
-        toast("Gagal menyimpan presensi.");
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-    
-    // Riwayat presensi
-    const unsubLog = subscribeRiwayat(user.uid, (items) => {
-      const list = $("#logList");
-      if (!list) return;
-      
-      list.innerHTML = "";
-      items.forEach(it => {
-        const badge = it.status === "tepat" ? "s-good" : (it.status === "terlambat" ? "s-warn" : "s-bad");
-        const el = document.createElement("div");
-        el.className = "row";
-        el.style.justifyContent = "space-between";
-        el.innerHTML = `
-          <div class="row" style="gap:8px">
-            <span class="material-symbols-rounded">schedule</span>
-            <b>${it.localTime || 'Waktu tidak tersedia'}</b>
-            <span>•</span>
-            <span>${it.jenis}</span>
-          </div>
-          <span class="status ${badge}">${it.status}</span>
-        `;
-        list.appendChild(el);
-      });
-    });
-    
-    // Notifikasi - DIPERBARUI
-    $("#notifBtn").onclick = () => $("#notifDlg").showModal();
-    const unsubNotif = subscribeNotifForKaryawan(user.uid, (items) => {
-      const list = $("#notifList");
-      if (!list) return;
-      
-      list.innerHTML = "";
-      
-      // Update badge notifikasi
-      const unreadCount = items.filter(item => !item.read).length;
-      const badge = $("#notifBadge");
-      if (badge) {
-        if (unreadCount > 0) {
-          badge.textContent = unreadCount;
-          badge.style.display = "grid";
-        } else {
-          badge.style.display = "none";
-        }
-      }
-      
-      items.forEach(it => {
-        const el = document.createElement("div");
-        el.className = "notification-item";
-        const sub = it.type === "announce" ? "Pengumuman" : 
-                   it.type === "cuti_response" ? "Balasan Cuti" : 
-                   it.type === "override" ? "Pengumuman Jadwal" : "Info";
-        
-        el.innerHTML = `
-          <div class="notification-content">
-            <div style="font-weight:700">${sub}</div>
-            <div style="opacity:.8; margin-top:4px">${it.text || "(tanpa teks)"}</div>
-            <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ""}</div>
-          </div>
-          <button class="notification-delete" data-id="${it.id}">
-            <span class="material-symbols-rounded">close</span>
-          </button>
-        `;
-        
-        // Tambahkan event listener untuk hapus notifikasi
-        el.querySelector(".notification-delete").onclick = async () => {
-          await hapusNotifikasi(it.id);
-          toast("Notifikasi dihapus.");
-        };
-        
-        list.appendChild(el);
-      });
-    });
-    
-    // Cuti - DIPERBARUI
-    $("#cutiFab").onclick = () => $("#cutiDlg").showModal();
-    $("#ajukanCutiBtn").onclick = async () => {
-      const jenis = $("#cutiJenis").value;
-      const tanggal = $("#cutiTanggal").value;
-      const catatan = $("#cutiCatatan").value.trim();
-      
-      if (!tanggal) {
-        toast("Pilih tanggal cuti.");
-        return;
-      }
-      
-      $("#loading").style.display = "flex";
-      
-      try {
-        const nama = ($("#nama")?.value || profile.nama || user.email.split("@")[0]).trim();
-        await ajukanCuti(user.uid, nama, jenis, tanggal, catatan);
-        toast("Permintaan cuti dikirim.");
-        $("#cutiDlg").close();
-      } catch (e) {
-        toast("Gagal mengajukan cuti.");
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-    
-    // Profil
-    $("#profileBtn").onclick = () => $("#profileDlg").showModal();
-    $("#saveProfileBtn").onclick = async () => {
-      $("#loading").style.display = "flex";
-      
-      try {
-        let pfpUrl;
-        const file = $("#pfpFile").files?.[0];
-        
-        if (file) {
-          // Kompres foto profil
-          const imgEl = document.createElement("img");
-          imgEl.src = URL.createObjectURL(file);
-          await new Promise(r => imgEl.onload = r);
-          
-          const c = document.createElement("canvas");
-          const scale = Math.min(1, 512 / Math.max(imgEl.width, imgEl.height));
-          c.width = Math.max(64, Math.round(imgEl.width * scale));
-          c.height = Math.max(64, Math.round(imgEl.height * scale));
-          
-          const ctx = c.getContext("2d");
-          ctx.drawImage(imgEl, 0, 0, c.width, c.height);
-          
-          const pfpBlob = await canvasToCompressedBlob(c, 50);
-          pfpUrl = await uploadToCloudinary(pfpBlob);
-          $("#pfp").src = pfpUrl;
-        }
-        
-        const nama = $("#nama").value.trim();
-        const alamat = $("#alamat").value.trim();
-        
-        await saveProfile(user.uid, { nama, alamat, pfpUrl });
-        toast("Profil tersimpan.");
-      } catch (e) {
-        toast("Gagal menyimpan profil.");
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-    
-    // Logout
-    $("#logoutBtn").onclick = async () => {
-      $("#loading").style.display = "flex";
-      await auth.signOut();
-      location.href = "index.html";
-    };
-    
-    // Sembunyikan loading
-    $("#loading").style.display = "none";
-    
-    // Bersihkan saat keluar
-    window.addEventListener("beforeunload", () => {
-      try {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-      } catch (e) {}
-      if (unsubLog) unsubLog();
-      if (unsubNotif) unsubNotif();
-    });
-  } catch (error) {
-    console.error("Error in bindKaryawanPage:", error);
-    toast("Error memuat halaman karyawan: " + error.message);
-    $("#loading").style.display = "none";
-  }
-}
-
-// Fungsi untuk bind halaman admin - DIPERBARUI
-async function bindAdminPage(user, userData) {
-  try {
-    // Tampilkan loading
-    $("#loading").style.display = "flex";
-    
-    // Muat profil
-    const profile = await getProfile(user.uid);
-    if (profile.pfp) $("#pfp").src = profile.pfp;
-    if (profile.nama) $("#nama").value = profile.nama;
-    if (profile.alamat) $("#alamat").value = profile.alamat;
-    
-    // Notifikasi (cuti) - DIPERBARUI
-    $("#notifBtn").onclick = () => $("#notifDlg").showModal();
-    const cutiList = $("#cutiList");
-    const unsubNotifCuti = subscribeNotifCutiForAdmin((items) => {
-      cutiList.innerHTML = "";
-      
-      // Update badge notifikasi
-      const badge = $("#notifBadge");
-      if (items.length > 0) {
-        badge.textContent = items.length;
-        badge.style.display = "grid";
-      } else {
-        badge.style.display = "none";
-      }
-      
-      items.forEach(it => {
-        const row = document.createElement("div");
-        row.className = "cuti-request";
-        row.innerHTML = `
-          <div class="notification-content">
-            <div style="font-weight:700">${it.text || 'Permintaan cuti'}</div>
-            <div class="notification-time">${it.createdAt ? it.createdAt.toDate().toLocaleString() : ''}</div>
-          </div>
-          <div class="cuti-actions">
-            <button class="btn" data-act="approveCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}">
-              <span class="material-symbols-rounded">check</span> Setujui
-            </button>
-            <button class="btn" data-act="rejectCuti" data-notifid="${it.id}" data-cutiid="${it.cutiId}" style="background:#222">
-              <span class="material-symbols-rounded">close</span> Tolak
-            </button>
-            <button class="notification-delete" data-notifid="${it.id}">
-              <span class="material-symbols-rounded">close</span>
-            </button>
-          </div>
-        `;
-        
-        cutiList.appendChild(row);
-      });
-      
-      // Bind actions
-      $$("[data-act='approveCuti']").forEach(b => b.onclick = async () => {
-        $("#loading").style.display = "flex";
-        await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "disetujui", user.uid);
-        $("#loading").style.display = "none";
-        toast("Cuti disetujui.");
-      });
-      
-      $$("[data-act='rejectCuti']").forEach(b => b.onclick = async () => {
-        $("#loading").style.display = "flex";
-        await processCutiRequest(b.dataset.notifid, b.dataset.cutiid, "ditolak", user.uid);
-        $("#loading").style.display = "none";
-        toast("Cuti ditolak.");
-      });
-      
-      $$(".notification-delete").forEach(b => b.onclick = async () => {
-        $("#loading").style.display = "flex";
-        await hapusNotifikasi(b.dataset.notifid);
-        $("#loading").style.display = "none";
-        toast("Notifikasi dihapus.");
-      });
-    });
-
-    // Pengumuman - DIPERBARUI
-    $("#announceFab").onclick = async () => {
-      const text = prompt("Tulis pengumuman:");
-      if (!text) return;
-      
-      $("#loading").style.display = "flex";
-      await kirimPengumuman(text, user.uid);
-      $("#loading").style.display = "none";
-      toast("Pengumuman terkirim.");
-    };
-    
-    $("#sendAnnounce").onclick = async () => {
-      const text = $("#announceText").value.trim();
-      if (!text) { toast("Tulis isi pengumuman."); return; }
-      
-      $("#loading").style.display = "flex";
-      await kirimPengumuman(text, user.uid);
-      $("#announceText").value = "";
-      $("#loading").style.display = "none";
-      toast("Pengumuman terkirim.");
-    };
-
-    // Jadwal wajib / tidak - DIPERBARUI
-    $("#saveSchedule").onclick = async () => {
-      const mode = $("#wajibHari").value;
-      const now = await getServerTime();
-      const todayYMD = ymd(now);
-      
-      $("#loading").style.display = "flex";
-      await setHariMode(mode, todayYMD, user.uid);
-      $("#loading").style.display = "none";
-      toast("Pengaturan hari tersimpan.");
-    };
-
-    // Kelola Karyawan
-    $("#kelolaKaryawanBtn").onclick = () => $("#kelolaKaryawanDlg").showModal();
-    
-    // Muat daftar karyawan
-    const loadDaftarKaryawan = async () => {
-      const karyawan = await getDaftarKaryawan();
-      const table = $("#karyawanTable");
-      
-      table.innerHTML = "";
-      karyawan.forEach(k => {
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${k.nama || "-"}</td>
-          <td>${k.email || "-"}</td>
-          <td>${k.jabatan || "-"}</td>
-          <td>
-            <button class="btn btn-small" data-action="edit" data-uid="${k.id}">Edit</button>
-            <button class="btn btn-small btn-danger" data-action="delete" data-uid="${k.id}">Hapus</button>
-          </td>
-        `;
-        table.appendChild(row);
-      });
-      
-      // Tambahkan event listener untuk edit dan hapus
-      $$("[data-action='edit']").forEach(btn => {
-        btn.onclick = () => editKaryawan(btn.dataset.uid);
-      });
-      
-      $$("[data-action='delete']").forEach(btn => {
-        btn.onclick = () => hapusKaryawanConfirm(btn.dataset.uid);
-      });
-    };
-    
-    // Load daftar karyawan pertama kali
-    await loadDaftarKaryawan();
-    
-    // Tambah karyawan
-    $("#tambahKaryawanBtn").onclick = async () => {
-      const data = {
-        nama: $("#karyawanNama").value.trim(),
-        email: $("#karyawanEmail").value.trim(),
-        password: $("#karyawanPassword").value,
-        jabatan: $("#karyawanJabatan").value.trim(),
-        alamat: $("#karyawanAlamat").value.trim()
-      };
-      
-      if (!data.nama || !data.email || !data.password) {
-        toast("Nama, email, dan password wajib diisi");
-        return;
-      }
-      
-      $("#loading").style.display = "flex";
-      
-      try {
-        // Buat user authentication
-        const userCredential = await auth.createUserWithEmailAndPassword(data.email, data.password);
-        
-        // Simpan data ke Firestore
-        await db.collection("users").doc(userCredential.user.uid).set({
-          nama: data.nama,
-          email: data.email,
-          role: "karyawan",
-          jabatan: data.jabatan,
-          alamat: data.alamat || "",
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        toast("Karyawan berhasil ditambah");
-        $("#tambahKaryawanForm").reset();
-        await loadDaftarKaryawan();
-      } catch (error) {
-        toast("Gagal menambah karyawan: " + error.message);
-      } finally {
-        $("#loading").style.display = "none";
-      }
-    };
-
-    // Sembunyikan loading
-    $("#loading").style.display = "none";
-
-  } catch (error) {
-    console.error("Error in bindAdminPage:", error);
-    toast("Error memuat halaman admin: " + error.message);
-    $("#loading").style.display = "none";
-  }
-}
-
 // Auth state change handler
 auth.onAuthStateChanged(async (user) => {
   const path = window.location.pathname;
@@ -1151,7 +646,7 @@ auth.onAuthStateChanged(async (user) => {
         window.location.href = "index.html";
         return;
       }
-      await bindKaryawanPage(user, { role });
+      // Implementasi bindKaryawanPage akan ada di file karyawan.html
     }
     
     if (path.endsWith("admin.html")) {
@@ -1159,7 +654,7 @@ auth.onAuthStateChanged(async (user) => {
         window.location.href = "index.html";
         return;
       }
-      await bindAdminPage(user, { role });
+      // Implementasi bindAdminPage akan ada di file admin.html
     }
   } catch (error) {
     console.error("Error in auth state change:", error);
