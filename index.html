@@ -23,7 +23,7 @@
       min-height:100svh; overflow:hidden; position:relative;
     }
     .glow{
-      position:absolute; inset:0; pointer-events:none; mix-blend-mode:multiply; filter:blur(40px);
+      position:absolute; inset:0; pointer-events:none; mix-blend:multiply; filter:blur(40px);
       background:
         radial-gradient(600px 400px at 20% 80%, rgba(255,255,255,.35), transparent),
         radial-gradient(400px 300px at 80% 20%, rgba(255,255,255,.25), transparent);
@@ -49,6 +49,7 @@
     }
     h1{margin:0 0 8px; font-weight:800; letter-spacing:.2px}
     p.sub{margin:0 0 16px; opacity:.8}
+    form{ margin:0 }
     .input{
       display:flex; align-items:center; gap:10px; background:#fff; border-radius:14px; padding:12px 14px; margin:12px 0;
       border:1px solid rgba(0,0,0,.06);
@@ -62,7 +63,7 @@
       padding:12px 16px; font-weight:700; color:#fff; background:linear-gradient(135deg, #FFB300, #FF8F00);
       box-shadow:0 10px 20px rgba(255,143,0,.25); transition:transform .15s ease, filter .2s ease;
     }
-    .btn:hover{ transform:translateY(-1px); filter:brightness(1.05) }
+    .btn[disabled]{ opacity:.7; transform:none; cursor:default; filter:grayscale(.05) }
     .link{ color:#222; opacity:.8; text-decoration:underline; cursor:pointer }
     .hint{ font-size:13px; opacity:.75; }
     .toast{
@@ -73,49 +74,13 @@
       display:flex; align-items:center; gap:10px; margin-bottom:10px;
     }
     .material-symbols-rounded{ font-variation-settings:"FILL" 1, "GRAD" 200; }
-    .loading {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(255, 255, 255, 0.8);
-      z-index: 100;
-      justify-content: center;
-      align-items: center;
-      flex-direction: column;
-    }
-    .loading-spinner {
-      width: 40px;
-      height: 40px;
-      border: 4px solid #f3f3f3;
-      border-top: 4px solid #FFB300;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .debug-info {
-      display: none;
-      background: #f5f5f5;
-      padding: 10px;
-      border-radius: 8px;
-      margin-top: 15px;
-      font-size: 12px;
-      color: #666;
-    }
+    .visually-hidden{ position:absolute !important; height:1px; width:1px; overflow:hidden; clip:rect(1px,1px,1px,1px); white-space:nowrap }
+    .spinner{ width:16px; height:16px; border-radius:50%; border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:spin .8s linear infinite; display:inline-block }
+    @keyframes spin{ to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <div class="loading" id="loading">
-    <div class="loading-spinner"></div>
-    <p style="margin-top: 16px;">Memproses...</p>
-  </div>
-  
-  <div class="glow"></div>
+  <div class="glow" aria-hidden="true"></div>
   <!-- daun jatuh -->
   <span class="material-symbols-rounded leaf" style="left:10%; font-size:28px; --x:10vw; --dx:-30px; animation-duration:11s;">spa</span>
   <span class="material-symbols-rounded leaf" style="left:30%; font-size:36px; --x:30vw; --dx:20px; animation-duration:13s; animation-delay:.5s;">eco</span>
@@ -123,242 +88,206 @@
   <span class="material-symbols-rounded leaf" style="left:75%; font-size:40px; --x:75vw; --dx:10px; animation-duration:15s; animation-delay:1.5s;">eco</span>
 
   <div class="wrap">
-    <div class="card">
+    <div class="card" role="main" aria-labelledby="appTitle">
       <div class="brand">
         <span class="material-symbols-rounded" style="color:#FF8F00;">workspace_premium</span>
-        <h1>Presensi FUPA</h1>
+        <div>
+          <h1 id="appTitle">Presensi FUPA</h1>
+          <p class="sub">Masuk menggunakan email dan kata sandi. Jika mengalami kendala kata sandi, hubungi admin.</p>
+        </div>
       </div>
-      <p class="sub">Masuk menggunakan email dan kata sandi. Jika mengalami kendala kata sandi, hubungi admin.</p>
 
-      <div class="input">
-        <span class="material-symbols-rounded">mail</span>
-        <input id="email" type="email" placeholder="Email kerja" autocomplete="username" />
-      </div>
-      <div class="input">
-        <span class="material-symbols-rounded">lock</span>
-        <input id="password" type="password" placeholder="Kata sandi" autocomplete="current-password" />
-        <button id="togglePass" class="btn" style="background:#eee;color:#222;box-shadow:none;padding:8px 10px;font-weight:600;">
-          <span class="material-symbols-rounded" id="eye">visibility</span>
-        </button>
-      </div>
-      <div class="row">
-        <span class="hint">Jika lupa sandi, hubungi admin.</span>
-        <button id="loginBtn" class="btn"><span class="material-symbols-rounded">login</span> Masuk</button>
-      </div>
-      
-      <div class="debug-info" id="debugInfo">
-        <p><strong>Debug Info:</strong></p>
-        <p id="debugText"></p>
-      </div>
+      <form id="loginForm" autocomplete="on" novalidate>
+        <div class="input" role="group" aria-label="Email kerja">
+          <span class="material-symbols-rounded" aria-hidden="true">mail</span>
+          <input id="email" name="email" type="email" placeholder="Email kerja" autocomplete="username" required aria-required="true" />
+        </div>
+
+        <div class="input" role="group" aria-label="Kata sandi">
+          <span class="material-symbols-rounded" aria-hidden="true">lock</span>
+          <input id="password" name="password" type="password" placeholder="Kata sandi" autocomplete="current-password" required aria-required="true" />
+          <button id="togglePass" type="button" class="btn" aria-pressed="false" aria-label="Tampilkan kata sandi"
+            style="background:#eee;color:#222;box-shadow:none;padding:8px 10px;font-weight:600;">
+            <span class="material-symbols-rounded" id="eye" aria-hidden="true">visibility</span>
+          </button>
+        </div>
+
+        <div class="row">
+          <span class="hint">Jika lupa sandi, hubungi admin.</span>
+          <button id="loginBtn" type="submit" class="btn" aria-label="Masuk dengan email dan kata sandi">
+            <span id="loginSpinner" style="display:none;margin-right:6px" aria-hidden="true" class="spinner"></span>
+            <span class="material-symbols-rounded" aria-hidden="true">login</span>
+            <span id="loginText">Masuk</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
-  <div class="toast" id="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <!-- Firebase compat libs -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script>
-    // Firebase config
-    const firebaseConfig = {
-      apiKey: "AIzaSyD6yGAN01Ns7ylc_MiCsQzcSKsIvhsCqzk",
-      authDomain: "presensi-byannisakaromi.firebaseapp.com",
-      projectId: "presensi-byannisakaromi",
-      storageBucket: "presensi-byannisakaromi.firebasestorage.app",
-      messagingSenderId: "291177514444",
-      appId: "1:291177514444:web:e312b378fa2c8f215ac969",
-      measurementId: "G-GXJC2K4ETP"
+
+  <!-- App logic (your app.js) -->
+  <script type="module" src="./app.js"></script>
+
+  <!-- Page-specific glue (auth state redirect, UI polish, service worker) -->
+  <script type="module">
+    // Short helpers
+    const $ = s => document.querySelector(s);
+    const showToast = (msg, ms = 3000) => {
+      const el = $("#toast");
+      if (!el) return alert(msg);
+      el.textContent = msg;
+      el.style.display = "block";
+      el.setAttribute('aria-hidden', 'false');
+      setTimeout(() => { el.style.display = "none"; el.setAttribute('aria-hidden', 'true'); }, ms);
     };
 
-    // Inisialisasi Firebase
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
+    // UI elements
+    const loginForm = $("#loginForm");
+    const emailInput = $("#email");
+    const passInput = $("#password");
+    const toggleBtn = $("#togglePass");
+    const eyeIcon = $("#eye");
+    const loginBtn = $("#loginBtn");
+    const loginSpinner = $("#loginSpinner");
+    const loginText = $("#loginText");
 
-    // Util UI
-    const $ = (sel) => document.querySelector(sel);
-    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-    const toast = (msg) => {
-      const t = $("#toast");
-      if (!t) return alert(msg);
-      t.textContent = msg;
-      t.style.display = "block";
-      setTimeout(() => { t.style.display = "none"; }, 3200);
-    };
+    // Password visibility toggle
+    toggleBtn.addEventListener("click", () => {
+      const isHidden = passInput.type === "password";
+      passInput.type = isHidden ? "text" : "password";
+      eyeIcon.textContent = isHidden ? "visibility_off" : "visibility";
+      toggleBtn.setAttribute("aria-pressed", String(isHidden));
+      passInput.focus();
+    });
 
-    // Tampilkan info debug
-    function showDebugInfo(info) {
-      const debugInfo = $("#debugInfo");
-      const debugText = $("#debugText");
-      if (debugInfo && debugText) {
-        debugText.textContent = info;
-        debugInfo.style.display = "block";
-      }
-    }
-
-    // UI only: toggle password eye
-    document.getElementById('togglePass').onclick = () => {
-      const inp = document.getElementById('password');
-      const eye = document.getElementById('eye');
-      const is = inp.type === 'password';
-      inp.type = is ? 'text' : 'password';
-      eye.textContent = is ? 'visibility_off' : 'visibility';
-    }
-
-    // Halaman login
-    function bindLoginPage() {
-      const loginBtn = $("#loginBtn");
-      if (!loginBtn) return;
-      
-      loginBtn.onclick = async () => {
-        const email = $("#email").value.trim();
-        const pass = $("#password").value.trim();
-        
-        if (!email || !pass) { 
-          toast("Isi email dan kata sandi."); 
-          return; 
-        }
-        
-        // Tampilkan loading
-        $("#loading").style.display = "flex";
-        
-        try {
-          const userCredential = await auth.signInWithEmailAndPassword(email, pass);
-          const user = userCredential.user;
-          
-          // Debug info
-          showDebugInfo(`Login berhasil. UID: ${user.uid}. Memeriksa role...`);
-          
-          // Periksa role dan redirect
-          await checkUserRoleAndRedirect(user);
-        } catch (e) {
-          $("#loading").style.display = "none";
-          let errorMessage = "Gagal masuk. Periksa kembali kredensial.";
-          
-          if (e.code === 'auth/user-not-found') {
-            errorMessage = "Email tidak terdaftar.";
-          } else if (e.code === 'auth/wrong-password') {
-            errorMessage = "Kata sandi salah.";
-          } else if (e.code === 'auth/invalid-email') {
-            errorMessage = "Format email tidak valid.";
-          } else if (e.code === 'auth/network-request-failed') {
-            errorMessage = "Koneksi jaringan gagal. Periksa koneksi internet Anda.";
-          }
-          
-          toast(errorMessage);
-          showDebugInfo(`Error: ${e.code} - ${e.message}`);
-        }
-      };
-    }
-
-    // Periksa role user dan redirect
-    async function checkUserRoleAndRedirect(user) {
-      const uid = user.uid;
-      
-      try {
-        // Cek dokumen user di Firestore untuk mendapatkan role
-        const userDoc = await db.collection("users").doc(uid).get();
-        
-        if (userDoc.exists) {
-          const userData = userDoc.data();
-          const role = userData.role;
-          
-          if (role === 'admin') {
-            showDebugInfo("Role terdeteksi: Admin. Mengarahkan ke halaman admin...");
-            setTimeout(() => {
-              window.location.href = 'admin.html';
-            }, 1500);
-          } else if (role === 'karyawan') {
-            showDebugInfo("Role terdeteksi: Karyawan. Mengarahkan ke halaman karyawan...");
-            setTimeout(() => {
-              window.location.href = 'karyawan.html';
-            }, 1500);
-          } else {
-            showDebugInfo("Role tidak valid. Silakan hubungi administrator.");
-            toast("Akses ditolak: role tidak valid.");
-            await auth.signOut();
-            $("#loading").style.display = "none";
-          }
-        } else {
-          // Jika dokumen user tidak ada, buat dokumen baru
-          showDebugInfo("Dokumen user tidak ditemukan. Membuat dokumen baru...");
-          await createUserDocument(user);
-          // Setelah membuat dokumen, coba lagi
-          await checkUserRoleAndRedirect(user);
-        }
-      } catch (error) {
-        console.error("Error checking user role:", error);
-        toast("Error memeriksa role pengguna.");
-        showDebugInfo(`Error: ${error.message}`);
-        $("#loading").style.display = "none";
-      }
-    }
-
-    // Buat dokumen user baru di Firestore
-    async function createUserDocument(user) {
-      try {
-        // Daftar UID admin (harus sesuai dengan aturan Firestore)
-        const ADMIN_UIDS = [
-          "S14dxz13hdMAVxxiPhTyqYsraCm2", // karomi@fupa.id
-          "OXQMUSsnSZRzHkRPQfx7wZDb2PI3"  // annisa@fupa.id
-        ];
-        
-        // Tentukan role berdasarkan UID
-        const role = ADMIN_UIDS.includes(user.uid) ? 'admin' : 'karyawan';
-        
-        // Buat dokumen user
-        await db.collection("users").doc(user.uid).set({
-          email: user.email,
-          role: role,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        showDebugInfo(`Dokumen user dibuat dengan role: ${role}`);
-      } catch (error) {
-        console.error("Error creating user document:", error);
-        throw new Error("Gagal membuat dokumen user");
-      }
-    }
-
-    // Auth state change handler
-    auth.onAuthStateChanged(async (user) => {
-      $("#loading").style.display = "none";
-      
-      const path = location.pathname.toLowerCase();
-      if (!user) {
-        // Cegah akses langsung ke halaman admin/karyawan
-        if (path.endsWith("karyawan.html") || path.endsWith("admin.html")) {
-          location.href = "index.html";
-        }
-        // Inisialisasi halaman login
-        if (path.endsWith("index.html") || path.endsWith("/")) {
-          bindLoginPage();
-        }
+    // Prevent duplicate handlers: app.js may already auto-bind. We only attach submit to provide better UX and prevent double submits.
+    let pending = false;
+    loginForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (pending) return;
+      const email = emailInput.value.trim();
+      const password = passInput.value;
+      if (!email || !password) {
+        showToast("Masukkan email dan kata sandi.");
         return;
       }
 
-      // Jika user sudah login, arahkan ke halaman yang sesuai
-      if (path.endsWith("index.html") || path.endsWith("/")) {
-        await checkUserRoleAndRedirect(user);
+      try {
+        pending = true;
+        loginBtn.setAttribute("disabled", "true");
+        loginSpinner.style.display = "inline-block";
+        loginText.textContent = "Sedang masuk...";
+
+        // Use firebase compat auth (app.js already initialized firebase)
+        const auth = firebase.auth();
+        const cred = await auth.signInWithEmailAndPassword(email, password);
+
+        // Create session record if available (from app.js export)
+        if (window.PresensiFUPA && typeof window.PresensiFUPA.createSessionRecord === 'function') {
+          try { await window.PresensiFUPA.createSessionRecord(cred.user); } catch (e) { console.warn('createSessionRecord failed', e); }
+        }
+
+        // onAuthStateChanged below will redirect; show toast briefly
+        showToast("Berhasil masuk — meneruskan…");
+      } catch (err) {
+        console.error("login error", err);
+        const msg = (err && err.code) ? mapFirebaseError(err) : "Gagal masuk — coba lagi";
+        showToast(msg, 5000);
+      } finally {
+        pending = false;
+        loginBtn.removeAttribute("disabled");
+        loginSpinner.style.display = "none";
+        loginText.textContent = "Masuk";
       }
     });
 
-    // PWA register SW
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./service-worker.js");
-      });
+    // Map common firebase error codes to friendly messages
+    function mapFirebaseError(e) {
+      const c = e.code || "";
+      switch (c) {
+        case "auth/user-not-found": return "Akun tidak ditemukan. Periksa email Anda.";
+        case "auth/wrong-password": return "Kata sandi salah. Coba lagi atau hubungi admin.";
+        case "auth/too-many-requests": return "Terlalu banyak percobaan. Coba lagi nanti.";
+        case "auth/invalid-email": return "Format email tidak valid.";
+        case "auth/user-disabled": return "Akun dinonaktifkan. Hubungi admin.";
+        default: return e.message || "Gagal masuk — periksa koneksi dan coba lagi.";
+      }
     }
 
-    // Inisialisasi halaman login
-    bindLoginPage();
+    // Auth state: redirect user based on role (custom claim preferred, fallback to users/{uid}.role)
+    (function attachAuthRedirect() {
+      const auth = firebase.auth();
+      const db = firebase.firestore();
 
-    // Enter key untuk login
-    document.getElementById('password').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        document.getElementById('loginBtn').click();
+      auth.onAuthStateChanged(async (user) => {
+        if (!user) return;
+        try {
+          // Prefer token claims if available
+          let role = null;
+          try {
+            const token = await user.getIdTokenResult();
+            if (token && token.claims && token.claims.role) role = token.claims.role;
+          } catch (e) {
+            console.warn("getIdTokenResult failed", e);
+          }
+
+          // fallback to users/{uid} doc
+          if (!role) {
+            try {
+              const snap = await db.collection("users").doc(user.uid).get();
+              if (snap.exists && snap.data().role) role = snap.data().role;
+            } catch (e) {
+              console.warn("fetch users doc failed", e);
+            }
+          }
+
+          // create session record if not created already (best-effort)
+          if (window.PresensiFUPA && typeof window.PresensiFUPA.createSessionRecord === 'function') {
+            try { await window.PresensiFUPA.createSessionRecord(user); } catch (e) { /* non-blocking */ }
+          }
+
+          // Normalize role values
+          const r = (role || "").toString().toLowerCase();
+          if (r === "admin" || r === "administrator") {
+            // redirect to admin
+            window.location.href = "./admin.html";
+            return;
+          } else {
+            // default to karyawan
+            window.location.href = "./karyawan.html";
+            return;
+          }
+        } catch (e) {
+          console.error("auth redirect error", e);
+          showToast("Gagal mengarahkan akun. Coba refresh.");
+        }
+      });
+    })();
+
+    // Service Worker registration (PWA)
+    (function registerSW() {
+      if ('serviceWorker' in navigator) {
+        // Register with relative path; adjust if your SW is served from different scope
+        navigator.serviceWorker.register('./service-worker.js').then(reg => {
+          console.log('ServiceWorker registered', reg.scope);
+        }).catch(err => {
+          console.warn('ServiceWorker registration failed', err);
+        });
       }
+    })();
+
+    // Small accessibility improvement: focus first input on load
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const el = $("#email");
+        if (el) el.focus();
+      }, 120);
     });
   </script>
 </body>
